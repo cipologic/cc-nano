@@ -1,10 +1,11 @@
 [project]
 name = "cc-nano"
 version = "0.1.0"
-description = ""
+description = "cc-nano 是一个极简的 AI 编程助手"
 authors = [
     {name = "AugLotus",email = "aug.zheng@139.com"}
 ]
+license = "MIT"
 readme = "README.md"
 requires-python = ">=3.12,<3.15"
 dependencies = [
