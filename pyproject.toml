@@ -29,6 +29,9 @@ ruff = "^0.15.12"
 [project.scripts]
 cc-nano = "cc_nano.tui.app:main"
 
+[tool.poetry-pyinstaller-plugin.scripts]
+cc-nano = { source = "src/cc_nano/tui/app.py", type = "onefile", bundle = false }
+
 [build-system]
 requires = ["poetry-core>=2.0.0,<3.0.0"]
 build-backend = "poetry.core.masonry.api"
@@ -41,9 +44,9 @@ priority = "primary"
 [[tool.poetry.source]]
 name = "aliyun"
 url = "https://mirrors.aliyun.com/pypi/simple/"
-priority = "supplemental"             # 备用源
+priority = "supplemental"
 
 [[tool.poetry.source]]
 name = "ustc"
 url = "https://mirrors.ustc.edu.cn/pypi/web/simple"
-priority = "supplemental"             # 另一个备用源
+priority = "supplemental"
