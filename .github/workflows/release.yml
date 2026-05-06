@@ -3,178 +3,235 @@ name: Build and Release Multi-Platform
 on:
   push:
     tags:
-      - 'v*.*.*'          # 推送形如 v1.0.0 的标签时触发
-  workflow_dispatch:      # 也支持手动触发
+      - 'v*.*.*'
+  workflow_dispatch:
 
 jobs:
-  build:
-    name: Build on ${{ matrix.os }}
-    runs-on: ${{ matrix.os }}
-    strategy:
-      matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
-
+  build-windows:
+    name: Build Windows
+    runs-on: windows-latest
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v6
-
-      - name: Set up Python
-        uses: actions/setup-python@v6
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
         with:
-          python-version: '3.12'          # 根据你的项目修改
-
+          python-version: '3.12'
       - name: Install Poetry
-        run: |
-          pip install poetry
-          poetry config virtualenvs.create true
-          poetry config virtualenvs.in-project true
-
+        run: pip install poetry
       - name: Install dependencies
-        run: poetry install --no-interaction
-
+        run: poetry install --no-interaction --no-root
       - name: Build with PyInstaller
         run: poetry run pyinstaller --clean --onefile --name cc-nano src/cc_nano/tui/app.py
-
-      - name: Rename executable for platform
-        shell: bash
-        run: |
-          if [[ "$RUNNER_OS" == "Linux" ]]; then
-            mv dist/cc-nano dist/cc-nano-linux
-          elif [[ "$RUNNER_OS" == "Windows" ]]; then
-            mv dist/cc-nano.exe dist/cc-nano-windows.exe
-          elif [[ "$RUNNER_OS" == "macOS" ]]; then
-            mv dist/cc-nano dist/cc-nano-macos
-          fi
-
-      - name: Upload artifact to workflow
+      - name: Rename executable
+        run: move dist\cc-nano.exe dist\cc-nano-windows.exe
+      - name: Upload artifact
         uses: actions/upload-artifact@v6
         with:
-          name: cc-nano-${{ runner.os }}
-          path: dist/cc-nano-*
+          name: cc-nano-windows
+          path: dist/cc-nano-windows.exe
+
+  build-macos:
+    name: Build macOS
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: Install Poetry
+        run: pip install poetry
+      - name: Install dependencies
+        run: poetry install --no-interaction --no-root
+      - name: Build with PyInstaller
+        run: poetry run pyinstaller --clean --onefile --name cc-nano src/cc_nano/tui/app.py
+      - name: Rename executable
+        run: mv dist/cc-nano dist/cc-nano-macos
+      - name: Upload artifact
+        uses: actions/upload-artifact@v6
+        with:
+          name: cc-nano-macos
+          path: dist/cc-nano-macos
+
+  build-linux-standard:
+    name: Build Linux (glibc, Ubuntu latest)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: Install Poetry
+        run: pip install poetry
+      - name: Install dependencies
+        run: poetry install --no-interaction --no-root
+      - name: Build with PyInstaller
+        run: poetry run pyinstaller --clean --onefile --name cc-nano src/cc_nano/tui/app.py
+      - name: Rename executable
+        run: mv dist/cc-nano dist/cc-nano-linux
+      - name: Upload artifact
+        uses: actions/upload-artifact@v6
+        with:
+          name: cc-nano-linux
+          path: dist/cc-nano-linux
+
+  build-linux-compat:
+    name: Build Linux (glibc, Ubuntu 20.04 for compatibility)
+    runs-on: ubuntu-20.04
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: Install Poetry
+        run: pip install poetry
+      - name: Install dependencies
+        run: poetry install --no-interaction --no-root
+      - name: Build with PyInstaller
+        run: poetry run pyinstaller --clean --onefile --name cc-nano src/cc_nano/tui/app.py
+      - name: Rename executable
+        run: mv dist/cc-nano dist/cc-nano-linux-compat
+      - name: Upload artifact
+        uses: actions/upload-artifact@v6
+        with:
+          name: cc-nano-linux-compat
+          path: dist/cc-nano-linux-compat
+
+  build-linux-musl:
+    name: Build Linux (musl static, Alpine container)
+    runs-on: ubuntu-latest
+    container:
+      image: python:3.12-alpine
+    steps:
+      - name: Install system dependencies
+        run: apk add --no-cache git build-base
+      - uses: actions/checkout@v6
+      - name: Install Poetry
+        run: pip install poetry
+      - name: Install dependencies
+        run: poetry install --no-interaction --no-root
+      - name: Build with PyInstaller
+        run: poetry run pyinstaller --clean --onefile --name cc-nano src/cc_nano/tui/app.py
+      - name: Rename executable
+        run: mv dist/cc-nano dist/cc-nano-linux-musl
+      - name: Upload artifact
+        uses: actions/upload-artifact@v6
+        with:
+          name: cc-nano-linux-musl
+          path: dist/cc-nano-linux-musl
 
   release:
     name: Create Release and Upload Assets
-    needs: build
+    needs: [build-windows, build-macos, build-linux-standard, build-linux-compat, build-linux-musl]
     runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/')
+    permissions:
+      contents: write
     steps:
       - name: Download all artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v6
         with:
           path: artifacts
 
-      - name: List artifacts (debug)
-        run: ls -R artifacts
+      - name: List artifacts
+        run: |
+          ls -R artifacts
+          find artifacts -type f
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           name: ${{ github.ref_name }}
           body: |
-              ## 🎉 cc-nano v${{ github.ref_name }}
+            ## 🎉 cc-nano v${{ github.ref_name }}
 
-              感谢使用 cc-nano！这是自动化构建的多平台二进制发布。
+            感谢使用 cc-nano！这是自动化构建的多平台二进制发布。
 
-              ### 📦 下载与使用
+            ### 📦 下载与使用
 
-              #### Linux / macOS
-              ```bash
-              # 下载对应平台的可执行文件
-              # 添加执行权限（Linux/macOS）
-              chmod +x cc-nano-linux   # 或 cc-nano-macos
-              ./cc-nano-linux
-              ```
+            #### Windows
+            直接双击 `cc-nano-windows.exe` 或在命令行中运行。
 
-              #### Windows
-              直接双击 `cc-nano-windows.exe` 即可运行，或在命令行中执行：
-              ```cmd
-              cc-nano-windows.exe
-              ```
+            #### macOS
+            ```bash
+            chmod +x cc-nano-macos
+            ./cc-nano-macos
+            ```
+            > 如果提示“无法验证开发者”，执行 `xattr -d com.apple.quarantine cc-nano-macos`
 
-              ### 🍎 macOS 用户特别注意
-              由于该二进制文件未经过 Apple 官方公证，macOS 可能会提示“无法验证开发者”或“已损坏”。  
-              **解决方法**：打开终端，进入下载目录，执行以下命令解除隔离：
-              ```bash
-              xattr -d com.apple.quarantine cc-nano-macos
-              ```
-              然后再次尝试运行。
+            #### Linux (glibc, 现代发行版)
+            ```bash
+            chmod +x cc-nano-linux
+            ./cc-nano-linux
+            ```
 
-              ### 📄 源代码
-              本版本对应的源码标签为 [`${{ github.ref_name }}`](https://github.com/cipologic/cc-nano/tree/${{ github.ref_name }})  
-              Gitee 镜像：[cipologic/cc-nano](https://gitee.com/cipologic/cc-nano)
+            #### Linux (glibc, 兼容旧发行版)
+            ```bash
+            chmod +x cc-nano-linux-compat
+            ./cc-nano-linux-compat
+            ```
 
-              ### 🤝 反馈与贡献
-              欢迎提交 Issue 或 Pull Request！
+            #### Linux (musl 静态链接，通用)
+            ```bash
+            chmod +x cc-nano-linux-musl
+            ./cc-nano-linux-musl
+            ```
+
+            ### 📄 源代码
+            标签：[`${{ github.ref_name }}`](https://github.com/cipologic/cc-nano/tree/${{ github.ref_name }})
+
+            ### 🤝 反馈与贡献
+            欢迎提交 Issue 或 Pull Request！
           draft: false
           prerelease: false
           files: |
-            artifacts/**/cc-nano-linux
             artifacts/**/cc-nano-windows.exe
             artifacts/**/cc-nano-macos
+            artifacts/**/cc-nano-linux
+            artifacts/**/cc-nano-linux-compat
+            artifacts/**/cc-nano-linux-musl
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      # 可选：同步 Release 到 Gitee
       - name: Sync Release to Gitee
-        if: env.GITEE_TOKEN
+        if: env.GITEE_TOKEN != ''
         env:
           GITEE_TOKEN: ${{ secrets.GITEE_TOKEN }}
           REPO_OWNER: "cipologic"
           REPO_NAME: "cc-nano"
           TAG_NAME: ${{ github.ref_name }}
         run: |
-          # 先测试 API 连通性
-          echo "Testing Gitee API access..."
+          # 测试鉴权
           USER_TEST=$(curl -s -H "Authorization: token ${GITEE_TOKEN}" https://gitee.com/api/v5/user | jq -r '.login')
           if [ "$USER_TEST" == "null" ]; then
-            echo "Token invalid or insufficient permissions"
+            echo "Token invalid"
             exit 1
           fi
-          echo "Authenticated as: $USER_TEST"
-
-          # 检查仓库是否存在
+          # 检查仓库
           REPO_TEST=$(curl -s -H "Authorization: token ${GITEE_TOKEN}" \
             "https://gitee.com/api/v5/repos/${REPO_OWNER}/${REPO_NAME}")
           if echo "$REPO_TEST" | grep -q "Not Found"; then
-            echo "Repository ${REPO_OWNER}/${REPO_NAME} not found on Gitee"
+            echo "Repository not found"
             exit 1
           fi
-          echo "Repository found."
-
-          # 确保 Gitee 上存在该标签（如果不存在，通过 git push 推送）
-          # 由于环境可能没有 git，可以跳过标签检查，直接创建 Release（若标签不存在会失败）
-          # 更好的做法是在之前的工作流中已经将标签推送到了双远程
-
-          # 查询是否已存在 Release
+          # 查询已有 Release
           EXIST=$(curl -s -H "Authorization: token ${GITEE_TOKEN}" \
             "https://gitee.com/api/v5/repos/${REPO_OWNER}/${REPO_NAME}/releases/tags/${TAG_NAME}")
           RELEASE_ID=$(echo $EXIST | jq -r '.id')
           if [ "$RELEASE_ID" == "null" ]; then
-            # 创建新 Release，并打印 HTTP 响应
-            RESP=$(curl -s -w "\nHTTP_CODE:%{http_code}" -X POST \
+            # 创建 Release，指定 target_commitish
+            RESP=$(curl -s -X POST \
               -H "Authorization: token ${GITEE_TOKEN}" \
               -H "Content-Type: application/json" \
-              -d "{\"tag_name\":\"${TAG_NAME}\",\"name\":\"${TAG_NAME}\",\"body\":\"Auto sync from GitHub\",\"prerelease\":false}" \
+              -d "{\"tag_name\":\"${TAG_NAME}\",\"name\":\"${TAG_NAME}\",\"body\":\"Auto sync from GitHub\",\"prerelease\":false,\"target_commitish\":\"main\"}" \
               https://gitee.com/api/v5/repos/${REPO_OWNER}/${REPO_NAME}/releases)
-            HTTP_CODE=$(echo "$RESP" | grep -o 'HTTP_CODE:[0-9]*' | cut -d: -f2)
-            BODY=$(echo "$RESP" | sed 's/HTTP_CODE:[0-9]*$//')
-            echo "HTTP Status: $HTTP_CODE"
-            echo "Response: $BODY"
-            if [ "$HTTP_CODE" != "201" ]; then
-              echo "Failed to create release. HTTP $HTTP_CODE"
-              exit 1
-            fi
-            RELEASE_ID=$(echo $BODY | jq -r '.id')
+            RELEASE_ID=$(echo $RESP | jq -r '.id')
             if [ "$RELEASE_ID" == "null" ]; then
-              echo "Release ID not found in response"
+              echo "Failed to create release: $(echo $RESP | jq -r '.message // .')"
               exit 1
             fi
           else
-            echo "Release already exists (id=$RELEASE_ID), will upload assets."
+            echo "Release already exists (id=$RELEASE_ID)"
           fi
-
-          # 上传附件（使用 find 避免 glob 问题）
-          find artifacts -type f -name "cc-nano-*" | while read file; do
+          # 上传所有产物
+          find artifacts -type f \( -name "cc-nano-windows.exe" -o -name "cc-nano-macos" -o -name "cc-nano-linux" -o -name "cc-nano-linux-compat" -o -name "cc-nano-linux-musl" \) | while read file; do
             echo "Uploading $file ..."
             curl -s -X POST \
               -H "Authorization: token ${GITEE_TOKEN}" \
