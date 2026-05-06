@@ -52,7 +52,7 @@ jobs:
           path: dist/cc-nano-macos
 
   build-linux-standard:
-    name: Build Linux (glibc, modern)
+    name: Build Linux (glibc, Ubuntu latest)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -74,39 +74,19 @@ jobs:
           path: dist/cc-nano-linux
 
   build-linux-compat:
-    name: Build Linux (glibc, manylinux2014 compatible)
-    runs-on: ubuntu-latest
-    container:
-      image: quay.io/pypa/manylinux2014_x86_64
+    name: Build Linux (glibc, Ubuntu 20.04 for compatibility)
+    runs-on: ubuntu-20.04
     steps:
-      - name: Install system dependencies
-        run: |
-          yum install -y git
       - uses: actions/checkout@v6
-      - name: Set up Python 3.12
-        run: |
-          # manylinux2014 镜像内置了多版本 Python，路径在 /opt/python/
-          # 使用 Python 3.12 的二进制
-          PYTHON_BIN="/opt/python/cp312-cp312/bin/python3.12"
-          if [ ! -f "$PYTHON_BIN" ]; then
-            echo "Python 3.12 not found in manylinux image, fallback to system python3"
-            PYTHON_BIN="python3"
-          fi
-          echo "PYTHON_BIN=$PYTHON_BIN" >> $GITHUB_ENV
-          $PYTHON_BIN --version
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
       - name: Install Poetry
-        run: |
-          ${{ env.PYTHON_BIN }} -m ensurepip
-          ${{ env.PYTHON_BIN }} -m pip install --upgrade pip
-          curl -sSL https://install.python-poetry.org | ${{ env.PYTHON_BIN }} -
-          # 将 poetry 加入 PATH
-          echo "$HOME/.local/bin" >> $GITHUB_PATH
+        run: pip install poetry
       - name: Install dependencies
-        run: |
-          poetry install --no-interaction --no-root
+        run: poetry install --no-interaction --no-root
       - name: Build with PyInstaller
-        run: |
-          poetry run pyinstaller --clean --onefile --name cc-nano src/cc_nano/tui/app.py
+        run: poetry run pyinstaller --clean --onefile --name cc-nano src/cc_nano/tui/app.py
       - name: Rename executable
         run: mv dist/cc-nano dist/cc-nano-linux-compat
       - name: Upload artifact
@@ -116,7 +96,7 @@ jobs:
           path: dist/cc-nano-linux-compat
 
   build-linux-musl:
-    name: Build Linux (musl static, Alpine)
+    name: Build Linux (musl static, Alpine container)
     runs-on: ubuntu-latest
     container:
       image: python:3.12-alpine
@@ -182,7 +162,7 @@ jobs:
             ./cc-nano-linux
             ```
 
-            #### Linux (glibc, manylinux2014 兼容，适用于旧发行版如 CentOS 7)
+            #### Linux (glibc, 兼容旧发行版)
             ```bash
             chmod +x cc-nano-linux-compat
             ./cc-nano-linux-compat
@@ -236,7 +216,7 @@ jobs:
             "https://gitee.com/api/v5/repos/${REPO_OWNER}/${REPO_NAME}/releases/tags/${TAG_NAME}")
           RELEASE_ID=$(echo $EXIST | jq -r '.id')
           if [ "$RELEASE_ID" == "null" ]; then
-            # 创建 Release，指定 target_commitish（分支名）
+            # 创建 Release，指定 target_commitish
             RESP=$(curl -s -X POST \
               -H "Authorization: token ${GITEE_TOKEN}" \
               -H "Content-Type: application/json" \
