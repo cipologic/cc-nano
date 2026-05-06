@@ -1,0 +1,48 @@
+[project]
+name = "cc-nano"
+version = "0.1.0"
+description = ""
+authors = [
+    {name = "AugLotus",email = "aug.zheng@139.com"}
+]
+readme = "README.md"
+requires-python = ">=3.12,<3.15"
+dependencies = [
+    "pyinstaller (>=6.19.0,<7.0.0)",
+    "poetry-pyinstaller-plugin (>=2.0.2,<3.0.0)",
+    "openai (>=2.32.0,<3.0.0)",
+    "rich (>=15.0.0,<16.0.0)",
+    "prompt-toolkit (>=3.0.52,<4.0.0)",
+    "anthropic (>=0.96.0,<0.97.0)",
+    "python-dotenv (>=1.2.2,<2.0.0)"
+]
+
+[tool.poetry]
+packages = [{include = "cc_nano", from = "src"}]
+
+[tool.poetry.group.dev.dependencies]
+isort = "^8.0.1"
+black = "^26.3.1"
+ruff = "^0.15.12"
+
+[project.scripts]
+cc-nano = "cc_nano.tui.app:main"
+
+[build-system]
+requires = ["poetry-core>=2.0.0,<3.0.0"]
+build-backend = "poetry.core.masonry.api"
+
+[[tool.poetry.source]]
+name = "tsinghua"
+url = "https://mirrors.tuna.tsinghua.edu.cn/pypi/web/simple/"
+priority = "primary"
+
+[[tool.poetry.source]]
+name = "aliyun"
+url = "https://mirrors.aliyun.com/pypi/simple/"
+priority = "supplemental"             # 备用源
+
+[[tool.poetry.source]]
+name = "ustc"
+url = "https://mirrors.ustc.edu.cn/pypi/web/simple"
+priority = "supplemental"             # 另一个备用源
