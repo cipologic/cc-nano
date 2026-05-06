@@ -116,7 +116,7 @@ jobs:
 
       # 可选：同步 Release 到 Gitee
       - name: Sync Release to Gitee
-        if: ${{ secrets.GITEE_TOKEN != '' }}
+        if: env.GITEE_TOKEN != ''
         env:
           GITEE_TOKEN: ${{ secrets.GITEE_TOKEN }}
           REPO_OWNER: "cipologic"
