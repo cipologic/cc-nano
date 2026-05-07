@@ -37,8 +37,3 @@ jobs:
         with:
           name: cc-nano-linux
           path: dist/cc-nano-linux
-
-      - name: Show binary info
-        run: |
-          file dist/cc-nano-linux
-          ldd dist/cc-nano-linux || echo "ldd not available"
