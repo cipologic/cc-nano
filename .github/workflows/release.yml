@@ -51,36 +51,29 @@ jobs:
           name: cc-nano-macos
           path: dist/cc-nano-macos
 
-  build-linux-standard:
-    name: Build Linux (glibc, Ubuntu latest)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-python@v6
-        with:
-          python-version: '3.12'
-      - name: Install Poetry
-        run: pip install poetry
-      - name: Install dependencies
-        run: poetry install --no-interaction --no-root
-      - name: Build with PyInstaller
-        run: poetry run pyinstaller --clean --onefile --name cc-nano src/cc_nano/tui/app.py
-      - name: Rename executable
-        run: mv dist/cc-nano dist/cc-nano-linux
-      - name: Upload artifact
-        uses: actions/upload-artifact@v6
-        with:
-          name: cc-nano-linux
-          path: dist/cc-nano-linux
-
+  # ==================== Linux 构建部分 ====================
+  # 兼容 Ubuntu 20.04+ / Debian 11+ (glibc >= 2.31)
   build-linux-compat:
-    name: Build Linux (glibc, Ubuntu 20.04 for compatibility)
-    runs-on: ubuntu-20.04
+    name: Build Linux (glibc 2.31, Ubuntu 20.04 compatible)
+    runs-on: ubuntu-latest
+    container:
+      image: ubuntu:20.04
+      options: --user root
     steps:
+      - name: Install system dependencies and Python 3.12
+        run: |
+          apt-get update
+          apt-get install -y software-properties-common curl git build-essential
+          add-apt-repository -y ppa:deadsnakes/ppa
+          apt-get update
+          apt-get install -y python3.12 python3.12-distutils python3.12-venv
+          update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.12 1
+          curl -sS https://bootstrap.pypa.io/get-pip.py | python3.12
+          export PATH=/root/.local/bin:$PATH
+          echo "export PATH=/root/.local/bin:$PATH" >> ~/.bashrc
       - uses: actions/checkout@v6
-      - uses: actions/setup-python@v6
         with:
-          python-version: '3.12'
+          set-safe-directory: true
       - name: Install Poetry
         run: pip install poetry
       - name: Install dependencies
@@ -88,13 +81,49 @@ jobs:
       - name: Build with PyInstaller
         run: poetry run pyinstaller --clean --onefile --name cc-nano src/cc_nano/tui/app.py
       - name: Rename executable
-        run: mv dist/cc-nano dist/cc-nano-linux-compat
+        run: mv dist/cc-nano dist/cc-nano-linux-glibc-2.31
       - name: Upload artifact
         uses: actions/upload-artifact@v6
         with:
-          name: cc-nano-linux-compat
-          path: dist/cc-nano-linux-compat
+          name: cc-nano-linux-glibc-2.31
+          path: dist/cc-nano-linux-glibc-2.31
 
+  # 兼容 CentOS 7 / RHEL 7 / Amazon Linux 2 (glibc 2.17)
+  build-linux-centos7:
+    name: Build Linux (glibc 2.17, CentOS 7 compatible)
+    runs-on: ubuntu-latest
+    container:
+      image: centos:7
+      options: --user root
+    steps:
+      - name: Install system dependencies and Python 3.12
+        run: |
+          # 安装 EPEL 和 IUS 仓库，获取 Python 3.12
+          yum install -y epel-release
+          yum install -y https://repo.ius.io/ius-release-el7.rpm
+          yum install -y gcc gcc-c++ make git python312 python312-pip python312-devel
+          # 创建软链接使 python3 指向 python3.12
+          ln -sf /usr/bin/python3.12 /usr/bin/python3
+          # 升级 pip
+          python3 -m pip install --upgrade pip
+      - uses: actions/checkout@v6
+        with:
+          set-safe-directory: true
+      - name: Install Poetry
+        run: python3 -m pip install poetry
+      - name: Install dependencies
+        run: poetry install --no-interaction --no-root
+      - name: Build with PyInstaller
+        run: poetry run pyinstaller --clean --onefile --name cc-nano src/cc_nano/tui/app.py
+      - name: Rename executable
+        run: mv dist/cc-nano dist/cc-nano-linux-glibc-2.17
+      - name: Upload artifact
+        uses: actions/upload-artifact@v6
+        with:
+          name: cc-nano-linux-glibc-2.17
+          path: dist/cc-nano-linux-glibc-2.17
+
+  # 静态链接 musl，适用于任何 Linux x86_64（Alpine、旧发行版等）
   build-linux-musl:
     name: Build Linux (musl static, Alpine container)
     runs-on: ubuntu-latest
@@ -120,7 +149,7 @@ jobs:
 
   release:
     name: Create Release and Upload Assets
-    needs: [build-windows, build-macos, build-linux-standard, build-linux-compat, build-linux-musl]
+    needs: [build-windows, build-macos, build-linux-compat, build-linux-centos7, build-linux-musl]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -156,22 +185,26 @@ jobs:
             ```
             > 如果提示“无法验证开发者”，执行 `xattr -d com.apple.quarantine cc-nano-macos`
 
-            #### Linux (glibc, 现代发行版)
-            ```bash
-            chmod +x cc-nano-linux
-            ./cc-nano-linux
-            ```
+            #### Linux 版本选择指南
 
-            #### Linux (glibc, 兼容旧发行版)
-            ```bash
-            chmod +x cc-nano-linux-compat
-            ./cc-nano-linux-compat
-            ```
+            我们提供了三种 Linux 二进制文件，各自适配不同年代的发行版：
 
-            #### Linux (musl 静态链接，通用)
+            | 二进制文件 | 最低 glibc | 适用发行版（例） | 推荐使用场景 |
+            |-----------|-----------|----------------|--------------|
+            | `cc-nano-linux-glibc-2.31` | 2.31 | Ubuntu 20.04+, Debian 11+, RHEL 9+, Fedora 35+, openSUSE Leap 15.3+ | **大多数现代 Linux 用户**，平衡兼容性与性能 |
+            | `cc-nano-linux-glibc-2.17` | 2.17 | CentOS 7, RHEL 7, Amazon Linux 2, 以及其他 glibc 2.17+ 的旧发行版 | **老旧企业环境**（如 CentOS 7 仍在生产中的场景） |
+            | `cc-nano-linux-musl` | 无依赖（静态链接） | **任何 Linux x86_64**（包括 Alpine、CentOS 7、Ubuntu 等所有发行版） | **追求最大兼容性**，或使用 musl libc 的发行版（如 Alpine） |
+
+            **使用建议：**
+            - 如果你不确定自己的系统版本，优先尝试 `cc-nano-linux-musl`（最常见，几乎总能运行）。
+            - 如果 musl 版本因某些 C 扩展问题无法工作，再尝试 `cc-nano-linux-glibc-2.31`。
+            - 如果系统是 CentOS 7 / RHEL 7 且 glibc 2.31 版本无法运行，请使用 `cc-nano-linux-glibc-2.17`。
+
+            **运行命令：**
             ```bash
-            chmod +x cc-nano-linux-musl
-            ./cc-nano-linux-musl
+            # 下载对应的二进制文件后
+            chmod +x cc-nano-linux-*
+            ./cc-nano-linux-<版本>
             ```
 
             ### 📄 源代码
@@ -184,12 +217,13 @@ jobs:
           files: |
             artifacts/**/cc-nano-windows.exe
             artifacts/**/cc-nano-macos
-            artifacts/**/cc-nano-linux
-            artifacts/**/cc-nano-linux-compat
+            artifacts/**/cc-nano-linux-glibc-2.31
+            artifacts/**/cc-nano-linux-glibc-2.17
             artifacts/**/cc-nano-linux-musl
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+      # 同步到 Gitee（保持不变，仅修改文件匹配模式）
       - name: Sync Release to Gitee
         if: env.GITEE_TOKEN != ''
         env:
@@ -198,25 +232,21 @@ jobs:
           REPO_NAME: "cc-nano"
           TAG_NAME: ${{ github.ref_name }}
         run: |
-          # 测试鉴权
           USER_TEST=$(curl -s -H "Authorization: token ${GITEE_TOKEN}" https://gitee.com/api/v5/user | jq -r '.login')
           if [ "$USER_TEST" == "null" ]; then
             echo "Token invalid"
             exit 1
           fi
-          # 检查仓库
           REPO_TEST=$(curl -s -H "Authorization: token ${GITEE_TOKEN}" \
             "https://gitee.com/api/v5/repos/${REPO_OWNER}/${REPO_NAME}")
           if echo "$REPO_TEST" | grep -q "Not Found"; then
             echo "Repository not found"
             exit 1
           fi
-          # 查询已有 Release
           EXIST=$(curl -s -H "Authorization: token ${GITEE_TOKEN}" \
             "https://gitee.com/api/v5/repos/${REPO_OWNER}/${REPO_NAME}/releases/tags/${TAG_NAME}")
           RELEASE_ID=$(echo $EXIST | jq -r '.id')
           if [ "$RELEASE_ID" == "null" ]; then
-            # 创建 Release，指定 target_commitish
             RESP=$(curl -s -X POST \
               -H "Authorization: token ${GITEE_TOKEN}" \
               -H "Content-Type: application/json" \
@@ -230,8 +260,7 @@ jobs:
           else
             echo "Release already exists (id=$RELEASE_ID)"
           fi
-          # 上传所有产物
-          find artifacts -type f \( -name "cc-nano-windows.exe" -o -name "cc-nano-macos" -o -name "cc-nano-linux" -o -name "cc-nano-linux-compat" -o -name "cc-nano-linux-musl" \) | while read file; do
+          find artifacts -type f \( -name "cc-nano-windows.exe" -o -name "cc-nano-macos" -o -name "cc-nano-linux-glibc-2.31" -o -name "cc-nano-linux-glibc-2.17" -o -name "cc-nano-linux-musl" \) | while read file; do
             echo "Uploading $file ..."
             curl -s -X POST \
               -H "Authorization: token ${GITEE_TOKEN}" \
