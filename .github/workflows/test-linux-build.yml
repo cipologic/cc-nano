@@ -2,51 +2,42 @@ name: Test Linux (glibc 2.17+) Build
 
 on:
   workflow_dispatch:
-  push:
-    branches:
-      - 'test-linux-build'
-      - 'main'
 
 jobs:
-  build-linux-compatible:
-    name: Build Linux compatible binary (glibc 2.17)
+  build-linux:
+    name: Build compatible Linux binary
     runs-on: ubuntu-latest
     container:
-      image: almalinux:8
+      image: quay.io/pypa/manylinux2014_x86_64
     steps:
-      - name: Install system dependencies
+      - name: Install Python 3.12 from IUS
         run: |
-          dnf install -y gcc gcc-c++ make git python3.12 python3.12-pip python3.12-devel
+          yum install -y epel-release
+          yum install -y https://repo.ius.io/ius-release-el7.rpm
+          yum install -y python312 python312-pip python312-devel
+          ln -sf /usr/bin/python3.12 /usr/local/bin/python3
+          ln -sf /usr/bin/pip3.12 /usr/local/bin/pip3
 
       - uses: actions/checkout@v6
 
-      - name: Upgrade pip without platform restrictions
+      - name: Export poetry dependencies to requirements.txt
         run: |
-          python3.12 -m pip install --upgrade pip
+          python3 -m pip install poetry
+          python3 -m poetry export -f requirements.txt --output requirements.txt --without-hashes
 
-      - name: Install Poetry and dependencies with manylinux2014 compatibility
+      - name: Install dependencies with manylinux2014 platform constraint
         run: |
-          export PIP_PLATFORM=manylinux2014_x86_64
-          export PIP_ONLY_BINARY=:all:
-          python3.12 -m pip install poetry
-          python3.12 -m poetry config virtualenvs.create true
-          python3.12 -m poetry install --no-interaction --no-root
+          python3 -m pip install --platform manylinux2014_x86_64 --only-binary :all: -r requirements.txt
+          python3 -m pip install pyinstaller
 
-      - name: Build with PyInstaller
-        run: |
-          python3.12 -m poetry run pyinstaller --clean --onefile --name cc-nano src/cc_nano/tui/app.py
+      - name: Build binary with PyInstaller
+        run: python3 -m PyInstaller --clean --onefile --name cc-nano src/cc_nano/tui/app.py
 
-      - name: Rename artifact
-        run: mv dist/cc-nano dist/cc-nano-linux-glibc-2.17
+      - name: Rename executable
+        run: mv dist/cc-nano dist/cc-nano-linux
 
       - name: Upload artifact
         uses: actions/upload-artifact@v6
         with:
-          name: cc-nano-linux-glibc-2.17
-          path: dist/cc-nano-linux-glibc-2.17
-          if-no-files-found: error
-
-      - name: Show binary info
-        run: |
-          file dist/cc-nano-linux-glibc-2.17
-          ldd dist/cc-nano-linux-glibc-2.17 || echo "ldd not available"
+          name: cc-nano-linux
+          path: dist/cc-nano-linux
