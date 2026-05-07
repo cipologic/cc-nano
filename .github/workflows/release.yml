@@ -52,7 +52,7 @@ jobs:
           path: dist/cc-nano-macos
 
   # ==================== Linux 构建 ====================
-  build-linux-glibc-2.31:
+  build-linux-glibc:
     name: Build Linux (glibc 2.31, Ubuntu 20.04 compatible)
     runs-on: ubuntu-latest
     container:
@@ -81,12 +81,12 @@ jobs:
       - name: Build with PyInstaller
         run: poetry run pyinstaller --clean --onefile --name cc-nano src/cc_nano/tui/app.py
       - name: Rename executable
-        run: mv dist/cc-nano dist/cc-nano-linux-glibc-2.31
+        run: mv dist/cc-nano dist/cc-nano-linux-glibc
       - name: Upload artifact
         uses: actions/upload-artifact@v6
         with:
-          name: cc-nano-linux-glibc-2.31
-          path: dist/cc-nano-linux-glibc-2.31
+          name: cc-nano-linux-glibc
+          path: dist/cc-nano-linux-glibc
 
   build-linux-musl:
     name: Build Linux (musl static, Alpine container)
@@ -113,7 +113,7 @@ jobs:
 
   release:
     name: Create Release and Upload Assets
-    needs: [build-windows, build-macos, build-linux-glibc-2.31, build-linux-musl]
+    needs: [build-windows, build-macos, build-linux-glibc, build-linux-musl]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -155,11 +155,11 @@ jobs:
 
             | 二进制文件 | 最低 glibc | 适用发行版（例） | 推荐使用场景 |
             |-----------|-----------|----------------|--------------|
-            | `cc-nano-linux-glibc-2.31` | 2.31 | Ubuntu 20.04+, Debian 11+, RHEL 9+, Fedora 35+, openSUSE Leap 15.3+ | **大多数现代 Linux 用户** |
+            | `cc-nano-linux-glibc` | 2.31 | Ubuntu 20.04+, Debian 11+, RHEL 9+, Fedora 35+, openSUSE Leap 15.3+ | **大多数现代 Linux 用户** |
             | `cc-nano-linux-musl` | 无依赖（静态链接） | **任何 Linux x86_64**（包括 CentOS 7, RHEL 7, Alpine, Ubuntu 等所有发行版） | **老旧系统（CentOS 7/RHEL 7）或追求最大兼容性** |
 
             **使用建议：**
-            - 如果你使用 Ubuntu 20.04 或更新版本、Debian 11+、RHEL 9+、Fedora 35+，推荐使用 `cc-nano-linux-glibc-2.31`。
+            - 如果你使用 Ubuntu 20.04 或更新版本、Debian 11+、RHEL 9+、Fedora 35+，推荐使用 `cc-nano-linux-glibc`。
             - 如果你使用 CentOS 7、RHEL 7、Alpine Linux，或 `glibc 2.31` 版本无法运行，请使用 `cc-nano-linux-musl`（静态链接，无系统依赖）。
 
             **运行命令：**
@@ -179,7 +179,7 @@ jobs:
           files: |
             artifacts/**/cc-nano-windows.exe
             artifacts/**/cc-nano-macos
-            artifacts/**/cc-nano-linux-glibc-2.31
+            artifacts/**/cc-nano-linux-glibc
             artifacts/**/cc-nano-linux-musl
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
