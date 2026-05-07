@@ -63,7 +63,7 @@ jobs:
         DEBIAN_FRONTEND: noninteractive
         TZ: UTC
     steps:
-      - name: Install system dependencies (build tools, git)
+      - name: Install system dependencies (build tools, git, curl)
         run: |
           apt-get update
           apt-get install -y curl git build-essential tzdata
@@ -74,7 +74,7 @@ jobs:
         with:
           python-version: '3.12'
       - name: Install Poetry
-        run: pip install poetry
+        run: python -m pip install poetry
       - name: Install dependencies
         run: poetry install --no-interaction --no-root
       - name: Build with PyInstaller
@@ -95,15 +95,28 @@ jobs:
       image: centos:7
       options: --user root
     steps:
-      - name: Switch CentOS 7 repos to vault (EOL fix)
+      - name: Switch CentOS 7 repos to vault and configure EPEL
         run: |
+          # 替换 CentOS 基础源为 vault
           sed -i 's/mirrorlist/#mirrorlist/g' /etc/yum.repos.d/CentOS-*.repo
           sed -i 's|#baseurl=http://mirror.centos.org|baseurl=http://vault.centos.org|g' /etc/yum.repos.d/CentOS-*.repo
-          yum install -y ca-certificates
-      - name: Install IUS repo and Python 3.12 (precompiled)
-        run: |
+          # 安装 EPEL 并替换其源为 vault
           yum install -y epel-release
-          yum install -y https://repo.ius.io/ius-release-el7.rpm
+          sed -i 's/mirrorlist/#mirrorlist/g' /etc/yum.repos.d/epel*.repo
+          sed -i 's|#baseurl=http://download.fedoraproject.org/pub/epel|baseurl=http://download.fedoraproject.org/pub/epel|g' /etc/yum.repos.d/epel*.repo
+          yum install -y ca-certificates
+      - name: Install IUS repo (with fallback mirror)
+        run: |
+          set -e
+          # 尝试官方源
+          if yum install -y https://repo.ius.io/7/x86_64/ius-release-el7.rpm; then
+            echo "IUS official repo installed successfully."
+          else
+            echo "Official IUS repo failed, trying Aliyun mirror..."
+            yum install -y https://mirrors.aliyun.com/ius/7/x86_64/ius-release-el7.rpm
+          fi
+      - name: Install Python 3.12 and build tools
+        run: |
           yum install -y gcc gcc-c++ make git python312 python312-pip python312-devel
           ln -sf /usr/bin/python3.12 /usr/bin/python3
           python3 -m pip install --upgrade pip
