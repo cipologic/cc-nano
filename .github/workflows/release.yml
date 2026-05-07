@@ -59,11 +59,14 @@ jobs:
     container:
       image: ubuntu:20.04
       options: --user root
+      env:
+        DEBIAN_FRONTEND: noninteractive
+        TZ: UTC
     steps:
       - name: Install system dependencies and Python 3.12
         run: |
           apt-get update
-          apt-get install -y software-properties-common curl git build-essential
+          apt-get install -y software-properties-common curl git build-essential tzdata
           add-apt-repository -y ppa:deadsnakes/ppa
           apt-get update
           apt-get install -y python3.12 python3.12-distutils python3.12-venv
@@ -96,15 +99,18 @@ jobs:
       image: centos:7
       options: --user root
     steps:
+      - name: Switch CentOS 7 repos to vault (EOL fix)
+        run: |
+          sed -i 's/mirrorlist/#mirrorlist/g' /etc/yum.repos.d/CentOS-*.repo
+          sed -i 's|#baseurl=http://mirror.centos.org|baseurl=http://vault.centos.org|g' /etc/yum.repos.d/CentOS-*.repo
+          # 可选：更新 CA 证书，防止 SSL 问题
+          yum install -y ca-certificates
       - name: Install system dependencies and Python 3.12
         run: |
-          # 安装 EPEL 和 IUS 仓库，获取 Python 3.12
           yum install -y epel-release
           yum install -y https://repo.ius.io/ius-release-el7.rpm
           yum install -y gcc gcc-c++ make git python312 python312-pip python312-devel
-          # 创建软链接使 python3 指向 python3.12
           ln -sf /usr/bin/python3.12 /usr/bin/python3
-          # 升级 pip
           python3 -m pip install --upgrade pip
       - uses: actions/checkout@v6
         with:
