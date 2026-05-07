@@ -1,39 +1,35 @@
-name: Test Linux (glibc 2.17+) Build
+name: Test Linux (glibc 2.28+) Build
 
 on:
   workflow_dispatch:
 
 jobs:
   build-linux:
-    name: Build compatible Linux binary
+    name: Build compatible Linux binary (glibc 2.28)
     runs-on: ubuntu-latest
     container:
-      image: quay.io/pypa/manylinux2014_x86_64
+      image: almalinux:8
     steps:
-      - name: Install Python 3.12 from IUS
+      - name: Install Python 3.12 and tools
         run: |
-          yum install -y epel-release
-          yum install -y https://repo.ius.io/ius-release-el7.rpm
-          yum install -y python312 python312-pip python312-devel
+          dnf install -y epel-release
+          dnf install -y python3.12 python3.12-pip python3.12-devel gcc gcc-c++ make git
           ln -sf /usr/bin/python3.12 /usr/local/bin/python3
           ln -sf /usr/bin/pip3.12 /usr/local/bin/pip3
 
       - uses: actions/checkout@v6
 
-      - name: Export poetry dependencies to requirements.txt
+      - name: Install Poetry and dependencies
         run: |
-          python3 -m pip install poetry
-          python3 -m poetry export -f requirements.txt --output requirements.txt --without-hashes
+          pip3 install --upgrade pip
+          pip3 install poetry
+          poetry config virtualenvs.create true
+          poetry install --no-interaction --no-root
 
-      - name: Install dependencies with manylinux2014 platform constraint
-        run: |
-          python3 -m pip install --platform manylinux2014_x86_64 --only-binary :all: -r requirements.txt
-          python3 -m pip install pyinstaller
+      - name: Build with PyInstaller
+        run: poetry run pyinstaller --clean --onefile --name cc-nano src/cc_nano/tui/app.py
 
-      - name: Build binary with PyInstaller
-        run: python3 -m PyInstaller --clean --onefile --name cc-nano src/cc_nano/tui/app.py
-
-      - name: Rename executable
+      - name: Rename binary
         run: mv dist/cc-nano dist/cc-nano-linux
 
       - name: Upload artifact
@@ -41,3 +37,8 @@ jobs:
         with:
           name: cc-nano-linux
           path: dist/cc-nano-linux
+
+      - name: Show binary info
+        run: |
+          file dist/cc-nano-linux
+          ldd dist/cc-nano-linux || echo "ldd not available"
