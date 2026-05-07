@@ -69,7 +69,7 @@ jobs:
           apt-get install -y software-properties-common curl git build-essential tzdata
           add-apt-repository -y ppa:deadsnakes/ppa
           apt-get update
-          apt-get install -y python3.12 python3.12-distutils python3.12-venv
+          apt-get install -y python3.12 python3.12-full
           update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.12 1
           curl -sS https://bootstrap.pypa.io/get-pip.py | python3.12
           export PATH=/root/.local/bin:$PATH
@@ -99,16 +99,28 @@ jobs:
       image: centos:7
       options: --user root
     steps:
+      # 1. 修复 CentOS 7 官方源为 Vault
       - name: Switch CentOS 7 repos to vault (EOL fix)
         run: |
+          # 禁用 mirrorlist 并启用 baseurl，将所有源指向 vault.centos.org
           sed -i 's/mirrorlist/#mirrorlist/g' /etc/yum.repos.d/CentOS-*.repo
           sed -i 's|#baseurl=http://mirror.centos.org|baseurl=http://vault.centos.org|g' /etc/yum.repos.d/CentOS-*.repo
-          # 可选：更新 CA 证书，防止 SSL 问题
+          # 可选：更新 CA 证书以防 SSL 问题
           yum install -y ca-certificates
+      # 2. 手动配置 EPEL 和 IUS 源到阿里云镜像
+      - name: Configure EPEL and IUS repositories with working mirrors
+        run: |
+          # 安装 EPEL 源 (阿里云镜像)
+          yum install -y epel-release
+          # 手动下载并安装阿里云镜像的 IUS 源
+          yum install -y https://mirrors.aliyun.com/ius/ius-release-el7.rpm
+        
+          # 清理并重建 yum 缓存
+          yum clean all
+          yum makecache fast
+      # 3. 安装构建依赖和 Python 3.12
       - name: Install system dependencies and Python 3.12
         run: |
-          yum install -y epel-release
-          yum install -y https://repo.ius.io/ius-release-el7.rpm
           yum install -y gcc gcc-c++ make git python312 python312-pip python312-devel
           ln -sf /usr/bin/python3.12 /usr/bin/python3
           python3 -m pip install --upgrade pip
