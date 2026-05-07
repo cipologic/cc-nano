@@ -51,22 +51,29 @@ jobs:
           name: cc-nano-macos
           path: dist/cc-nano-macos
 
+  # ==================== Linux 构建（glibc 2.28+ 兼容） ====================
   build-linux:
-    name: Build Linux (musl static, universal)
+    name: Build Linux (glibc 2.28+)
     runs-on: ubuntu-latest
     container:
-      image: python:3.12-alpine
+      image: almalinux:8
     steps:
-      - name: Install system dependencies
-        run: apk add --no-cache git build-base
+      - name: Install Python 3.12 and tools
+        run: |
+          dnf install -y epel-release
+          dnf install -y python3.12 python3.12-pip python3.12-devel gcc gcc-c++ make git
+          ln -sf /usr/bin/python3.12 /usr/local/bin/python3
+          ln -sf /usr/bin/pip3.12 /usr/local/bin/pip3
       - uses: actions/checkout@v6
-      - name: Install Poetry
-        run: pip install poetry
-      - name: Install dependencies
-        run: poetry install --no-interaction --no-root
+      - name: Install Poetry and dependencies
+        run: |
+          pip3 install --upgrade pip
+          pip3 install poetry
+          poetry config virtualenvs.create true
+          poetry install --no-interaction --no-root
       - name: Build with PyInstaller
         run: poetry run pyinstaller --clean --onefile --name cc-nano src/cc_nano/tui/app.py
-      - name: Rename executable
+      - name: Rename binary
         run: mv dist/cc-nano dist/cc-nano-linux
       - name: Upload artifact
         uses: actions/upload-artifact@v6
@@ -87,9 +94,7 @@ jobs:
           path: artifacts
 
       - name: List artifacts
-        run: |
-          ls -R artifacts
-          find artifacts -type f
+        run: ls -R artifacts
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
@@ -112,9 +117,24 @@ jobs:
             ```
             > 如果提示“无法验证开发者”，执行 `xattr -d com.apple.quarantine cc-nano-macos`
 
-            #### Linux (通用)
-            **`cc-nano-linux` 是静态链接的 musl 二进制，可在任何 Linux x86_64 发行版上运行**（包括 Ubuntu 20.04、CentOS 7、Debian 11、Alpine 等）。
+            #### Linux
+            `cc-nano-linux` 基于 **AlmaLinux 8** 构建，要求 **glibc ≥ 2.28**。  
+            以下主流发行版均可直接运行：
 
+            | 发行版               | 最低版本                  | glibc 版本 |
+            |----------------------|---------------------------|------------|
+            | Ubuntu               | 20.04 LTS                 | 2.31       |
+            | Debian               | 11                        | 2.31       |
+            | RHEL / CentOS        | 8                         | 2.28       |
+            | Rocky Linux / AlmaLinux | 8                      | 2.28       |
+            | Fedora               | 35                        | 2.34       |
+            | openSUSE Leap        | 15.3                      | 2.31       |
+            | Arch Linux           | 任何近期版本              | ≥2.35      |
+
+            **不支持的系统**：CentOS 7 / RHEL 7（glibc 2.17）。  
+            如您必须使用 CentOS 7，建议通过 Docker 运行（`docker run -it --rm -v .:/work alpine:3.19 /work/cc-nano-linux`）或使用旧版本。
+
+            **运行命令：**
             ```bash
             chmod +x cc-nano-linux
             ./cc-nano-linux
@@ -138,34 +158,32 @@ jobs:
           REPO_OWNER: "cipologic"
           REPO_NAME: "cc-nano"
           TAG_NAME: ${{ github.ref_name }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -e
           # 从 GitHub 获取 Release 正文
-          echo "Fetching GitHub release body for tag ${TAG_NAME}..."
           GH_RELEASE=$(curl -s -H "Authorization: token ${GH_TOKEN}" \
             "https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/releases/tags/${TAG_NAME}")
           GH_BODY=$(echo "$GH_RELEASE" | jq -r '.body')
           if [ "$GH_BODY" == "null" ] || [ -z "$GH_BODY" ]; then
-            echo "Failed to fetch GitHub release body, using default message"
             GH_BODY="Auto sync from GitHub"
           fi
-          # 将 body 转义为 JSON 字符串（保留换行符和特殊字符）
           ESCAPED_BODY=$(jq -s -R -r @json <<< "$GH_BODY")
-          
-          # 认证测试
+
+          # Gitee 鉴权
           USER_TEST=$(curl -s -H "Authorization: token ${GITEE_TOKEN}" https://gitee.com/api/v5/user | jq -r '.login')
           if [ "$USER_TEST" == "null" ]; then
-            echo "Token invalid"
+            echo "Invalid Gitee token"
             exit 1
           fi
-          # 仓库检查
+          # 检查仓库
           REPO_TEST=$(curl -s -H "Authorization: token ${GITEE_TOKEN}" \
             "https://gitee.com/api/v5/repos/${REPO_OWNER}/${REPO_NAME}")
           if echo "$REPO_TEST" | grep -q "Not Found"; then
             echo "Repository not found"
             exit 1
           fi
-          # 查询已有 Release
+          # 获取或创建 Release
           EXIST=$(curl -s -H "Authorization: token ${GITEE_TOKEN}" \
             "https://gitee.com/api/v5/repos/${REPO_OWNER}/${REPO_NAME}/releases/tags/${TAG_NAME}")
           RELEASE_ID=$(echo $EXIST | jq -r '.id')
@@ -173,23 +191,22 @@ jobs:
             RESP=$(curl -s -X POST \
               -H "Authorization: token ${GITEE_TOKEN}" \
               -H "Content-Type: application/json" \
-              -d "{\"tag_name\":\"${TAG_NAME}\",\"name\":\"${TAG_NAME}\",\"body\":\"Auto sync from GitHub\",\"prerelease\":false,\"target_commitish\":\"main\"}" \
+              -d "{\"tag_name\":\"${TAG_NAME}\",\"name\":\"${TAG_NAME}\",\"body\":${ESCAPED_BODY},\"prerelease\":false,\"target_commitish\":\"main\"}" \
               https://gitee.com/api/v5/repos/${REPO_OWNER}/${REPO_NAME}/releases)
             RELEASE_ID=$(echo $RESP | jq -r '.id')
             if [ "$RELEASE_ID" == "null" ]; then
               echo "Failed to create release: $(echo $RESP | jq -r '.message // .')"
               exit 1
             fi
+            echo "Created release id $RELEASE_ID"
           else
-            echo "Release already exists (id=$RELEASE_ID)"
+            echo "Release already exists (id=$RELEASE_ID), skipping body update"
           fi
-
-          # 上传所有产物，带重试和超时
+          # 上传产物（带重试）
           find artifacts -type f \( -name "cc-nano-windows.exe" -o -name "cc-nano-macos" -o -name "cc-nano-linux" \) | while read file; do
             echo "Uploading $file ..."
             for i in 1 2 3; do
-              echo "Attempt $i"
-              RESP=$(curl -s --connect-timeout 30 --max-time 300 --progress-bar \
+              RESP=$(curl -s --connect-timeout 30 --max-time 300 \
                 -X POST \
                 -H "Authorization: token ${GITEE_TOKEN}" \
                 -F "file=@${file}" \
@@ -198,11 +215,8 @@ jobs:
                 echo "Upload success: $(echo "$RESP" | jq -r '.name')"
                 break
               else
-                echo "Upload failed: $RESP"
-                if [ $i -eq 3 ]; then
-                  echo "Giving up after 3 attempts"
-                  exit 1
-                fi
+                echo "Upload failed (attempt $i): $RESP"
+                if [ $i -eq 3 ]; then exit 1; fi
                 sleep 5
               fi
             done
