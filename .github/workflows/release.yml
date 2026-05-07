@@ -63,20 +63,16 @@ jobs:
         DEBIAN_FRONTEND: noninteractive
         TZ: UTC
     steps:
-      - name: Install system dependencies and Python 3.12
+      - name: Install system dependencies (build tools, git)
         run: |
           apt-get update
-          apt-get install -y software-properties-common curl git build-essential tzdata
-          add-apt-repository -y ppa:deadsnakes/ppa
-          apt-get update
-          apt-get install -y python3.12 python3.12-venv python3.12-dev
-          update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.12 1
-          curl -sS https://bootstrap.pypa.io/get-pip.py | python3.12
-          export PATH=/root/.local/bin:$PATH
-          echo "export PATH=/root/.local/bin:$PATH" >> ~/.bashrc
+          apt-get install -y curl git build-essential tzdata
       - uses: actions/checkout@v6
         with:
           set-safe-directory: true
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
       - name: Install Poetry
         run: pip install poetry
       - name: Install dependencies
@@ -99,53 +95,29 @@ jobs:
       image: centos:7
       options: --user root
     steps:
-      # 修复 CentOS 7 仓库 URL（EOL 后切换到 vault）
-      - name: Switch CentOS 7 repos to vault
+      - name: Switch CentOS 7 repos to vault (EOL fix)
         run: |
           sed -i 's/mirrorlist/#mirrorlist/g' /etc/yum.repos.d/CentOS-*.repo
           sed -i 's|#baseurl=http://mirror.centos.org|baseurl=http://vault.centos.org|g' /etc/yum.repos.d/CentOS-*.repo
           yum install -y ca-certificates
-
-      # 安装编译 Python 3.12 所需的依赖
-      - name: Install build dependencies
+      - name: Install IUS repo and Python 3.12 (precompiled)
         run: |
-          yum install -y gcc gcc-c++ make git openssl-devel bzip2-devel libffi-devel \
-                          zlib-devel readline-devel sqlite-devel wget
-
-      # 下载并编译 Python 3.12（静态链接部分库，提高可移植性）
-      - name: Build Python 3.12 from source
-        run: |
-          cd /usr/src
-          wget https://www.python.org/ftp/python/3.12.9/Python-3.12.9.tgz
-          tar xzf Python-3.12.9.tgz
-          cd Python-3.12.9
-          ./configure --enable-optimizations --prefix=/usr/local
-          make -j$(nproc)
-          make altinstall
-          ln -sf /usr/local/bin/python3.12 /usr/local/bin/python3
-          ln -sf /usr/local/bin/pip3.12 /usr/local/bin/pip3
-          # 更新 PATH
-          echo "/usr/local/bin" >> $GITHUB_PATH
-
-      - name: Verify Python installation
-        run: python3 --version && pip3 --version
-
+          yum install -y epel-release
+          yum install -y https://repo.ius.io/ius-release-el7.rpm
+          yum install -y gcc gcc-c++ make git python312 python312-pip python312-devel
+          ln -sf /usr/bin/python3.12 /usr/bin/python3
+          python3 -m pip install --upgrade pip
       - uses: actions/checkout@v6
         with:
           set-safe-directory: true
-
       - name: Install Poetry
-        run: pip3 install poetry
-
+        run: python3 -m pip install poetry
       - name: Install dependencies
         run: poetry install --no-interaction --no-root
-
       - name: Build with PyInstaller
         run: poetry run pyinstaller --clean --onefile --name cc-nano src/cc_nano/tui/app.py
-
       - name: Rename executable
         run: mv dist/cc-nano dist/cc-nano-linux-glibc-2.17
-
       - name: Upload artifact
         uses: actions/upload-artifact@v6
         with:
