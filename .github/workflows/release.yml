@@ -20,7 +20,7 @@ jobs:
       - name: Install dependencies
         run: poetry install --no-interaction --no-root
       - name: Build with PyInstaller
-        run: poetry run pyinstaller --clean --onefile --name cc-nano src/cc_nano/tui/app.py
+        run: poetry run pyinstaller --clean --onefile --strip --name cc-nano src/cc_nano/tui/app.py
       - name: Rename executable
         run: move dist\cc-nano.exe dist\cc-nano-windows.exe
       - name: Upload artifact
@@ -42,7 +42,7 @@ jobs:
       - name: Install dependencies
         run: poetry install --no-interaction --no-root
       - name: Build with PyInstaller
-        run: poetry run pyinstaller --clean --onefile --name cc-nano src/cc_nano/tui/app.py
+        run: poetry run pyinstaller --clean --onefile --strip --name cc-nano src/cc_nano/tui/app.py
       - name: Rename executable
         run: mv dist/cc-nano dist/cc-nano-macos
       - name: Upload artifact
@@ -72,7 +72,7 @@ jobs:
           poetry config virtualenvs.create true
           poetry install --no-interaction --no-root
       - name: Build with PyInstaller
-        run: poetry run pyinstaller --clean --onefile --name cc-nano src/cc_nano/tui/app.py
+        run: poetry run pyinstaller --clean --onefile --strip --name cc-nano src/cc_nano/tui/app.py
       - name: Rename binary
         run: mv dist/cc-nano dist/cc-nano-linux
       - name: Upload artifact
@@ -206,7 +206,7 @@ jobs:
           find artifacts -type f \( -name "cc-nano-windows.exe" -o -name "cc-nano-macos" -o -name "cc-nano-linux" \) | while read file; do
             echo "Uploading $file ..."
             for i in 1 2 3; do
-              RESP=$(curl -s --connect-timeout 30 --max-time 300 \
+              RESP=$(curl -s --connect-timeout 120 --max-time 1200 \
                 -X POST \
                 -H "Authorization: token ${GITEE_TOKEN}" \
                 -F "file=@${file}" \
