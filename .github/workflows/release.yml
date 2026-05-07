@@ -96,7 +96,7 @@ jobs:
         with:
           name: ${{ github.ref_name }}
           body: |
-            ## 🎉 cc-nano v${{ github.ref_name }}
+            ## 🎉 cc-nano ${{ github.ref_name }}
 
             感谢使用 cc-nano！这是自动化构建的多平台二进制发布。
 
@@ -120,9 +120,6 @@ jobs:
             ./cc-nano-linux
             ```
 
-            ### 📄 源代码
-            标签：[`${{ github.ref_name }}`](https://github.com/cipologic/cc-nano/tree/${{ github.ref_name }})
-
             ### 🤝 反馈与贡献
             欢迎提交 Issue 或 Pull Request！
           draft: false
@@ -142,17 +139,33 @@ jobs:
           REPO_NAME: "cc-nano"
           TAG_NAME: ${{ github.ref_name }}
         run: |
+          set -e
+          # 从 GitHub 获取 Release 正文
+          echo "Fetching GitHub release body for tag ${TAG_NAME}..."
+          GH_RELEASE=$(curl -s -H "Authorization: token ${GH_TOKEN}" \
+            "https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/releases/tags/${TAG_NAME}")
+          GH_BODY=$(echo "$GH_RELEASE" | jq -r '.body')
+          if [ "$GH_BODY" == "null" ] || [ -z "$GH_BODY" ]; then
+            echo "Failed to fetch GitHub release body, using default message"
+            GH_BODY="Auto sync from GitHub"
+          fi
+          # 将 body 转义为 JSON 字符串（保留换行符和特殊字符）
+          ESCAPED_BODY=$(jq -s -R -r @json <<< "$GH_BODY")
+          
+          # 认证测试
           USER_TEST=$(curl -s -H "Authorization: token ${GITEE_TOKEN}" https://gitee.com/api/v5/user | jq -r '.login')
           if [ "$USER_TEST" == "null" ]; then
             echo "Token invalid"
             exit 1
           fi
+          # 仓库检查
           REPO_TEST=$(curl -s -H "Authorization: token ${GITEE_TOKEN}" \
             "https://gitee.com/api/v5/repos/${REPO_OWNER}/${REPO_NAME}")
           if echo "$REPO_TEST" | grep -q "Not Found"; then
             echo "Repository not found"
             exit 1
           fi
+          # 查询已有 Release
           EXIST=$(curl -s -H "Authorization: token ${GITEE_TOKEN}" \
             "https://gitee.com/api/v5/repos/${REPO_OWNER}/${REPO_NAME}/releases/tags/${TAG_NAME}")
           RELEASE_ID=$(echo $EXIST | jq -r '.id')
@@ -170,10 +183,27 @@ jobs:
           else
             echo "Release already exists (id=$RELEASE_ID)"
           fi
+
+          # 上传所有产物，带重试和超时
           find artifacts -type f \( -name "cc-nano-windows.exe" -o -name "cc-nano-macos" -o -name "cc-nano-linux" \) | while read file; do
             echo "Uploading $file ..."
-            curl -s -X POST \
-              -H "Authorization: token ${GITEE_TOKEN}" \
-              -F "file=@${file}" \
-              https://gitee.com/api/v5/repos/${REPO_OWNER}/${REPO_NAME}/releases/${RELEASE_ID}/attach_files
+            for i in 1 2 3; do
+              echo "Attempt $i"
+              RESP=$(curl -s --connect-timeout 30 --max-time 300 --progress-bar \
+                -X POST \
+                -H "Authorization: token ${GITEE_TOKEN}" \
+                -F "file=@${file}" \
+                https://gitee.com/api/v5/repos/${REPO_OWNER}/${REPO_NAME}/releases/${RELEASE_ID}/attach_files)
+              if echo "$RESP" | jq -e '.id' >/dev/null 2>&1; then
+                echo "Upload success: $(echo "$RESP" | jq -r '.name')"
+                break
+              else
+                echo "Upload failed: $RESP"
+                if [ $i -eq 3 ]; then
+                  echo "Giving up after 3 attempts"
+                  exit 1
+                fi
+                sleep 5
+              fi
+            done
           done

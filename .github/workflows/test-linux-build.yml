@@ -1,0 +1,54 @@
+name: Test Linux (glibc 2.17+) Build
+
+on:
+  workflow_dispatch:                # 手动触发
+  push:
+    branches:
+      - 'test-linux-build'          # 可改为你想测试的分支名
+      - 'main'                      # 可选：推送到 main 时也触发
+
+jobs:
+  build-linux-compatible:
+    name: Build Linux compatible binary (glibc 2.17)
+    runs-on: ubuntu-latest
+    container:
+      image: almalinux:8            # glibc 2.28，但与 2.17 兼容
+    steps:
+      - name: Install system dependencies
+        run: |
+          dnf install -y gcc gcc-c++ make git python3.12 python3.12-pip python3.12-devel
+
+      - name: Configure pip for manylinux2014 (max compatibility)
+        run: |
+          python3.12 -m pip config set global.platform manylinux2014_x86_64
+          python3.12 -m pip config set global.only-binary :all:
+          python3.12 -m pip config set global.no-clean true
+
+      - uses: actions/checkout@v6
+
+      - name: Install Poetry and dependencies
+        run: |
+          python3.12 -m pip install --upgrade pip
+          python3.12 -m pip install poetry
+          python3.12 -m poetry config virtualenvs.create true
+          python3.12 -m poetry install --no-interaction --no-root
+
+      - name: Build with PyInstaller
+        run: |
+          python3.12 -m poetry run pyinstaller --clean --onefile --name cc-nano src/cc_nano/tui/app.py
+
+      - name: Rename artifact
+        run: mv dist/cc-nano dist/cc-nano-linux-glibc-2.17
+
+      - name: Upload artifact (for testing)
+        uses: actions/upload-artifact@v6
+        with:
+          name: cc-nano-linux-glibc-2.17
+          path: dist/cc-nano-linux-glibc-2.17
+          if-no-files-found: error
+
+      - name: Show binary dependencies (for verification)
+        run: |
+          echo "=== ldd output ==="
+          ldd dist/cc-nano-linux-glibc-2.17 || echo "ldd not available, using file"
+          file dist/cc-nano-linux-glibc-2.17
