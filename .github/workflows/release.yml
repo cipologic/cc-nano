@@ -206,7 +206,7 @@ jobs:
           find artifacts -type f \( -name "cc-nano-windows.exe" -o -name "cc-nano-macos" -o -name "cc-nano-linux" \) | while read file; do
             echo "Uploading $file ..."
             for i in 1 2 3; do
-              RESP=$(curl -s --connect-timeout 120 --max-time 1200 \
+              RESP=$(curl -s --connect-timeout 120 --max-time 2400 \
                 -X POST \
                 -H "Authorization: token ${GITEE_TOKEN}" \
                 -F "file=@${file}" \
