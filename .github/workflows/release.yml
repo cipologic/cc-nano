@@ -51,45 +51,8 @@ jobs:
           name: cc-nano-macos
           path: dist/cc-nano-macos
 
-  # ==================== Linux 构建 ====================
-  build-linux-glibc:
-    name: Build Linux (glibc 2.31, Ubuntu 20.04 compatible)
-    runs-on: ubuntu-latest
-    container:
-      image: ubuntu:20.04
-      options: --user root
-      env:
-        DEBIAN_FRONTEND: noninteractive
-        TZ: UTC
-    steps:
-      - name: Install system dependencies and Python 3.12 from deadsnakes
-        run: |
-          apt-get update
-          apt-get install -y software-properties-common curl git build-essential tzdata
-          add-apt-repository -y ppa:deadsnakes/ppa
-          apt-get update
-          apt-get install -y python3.12 python3.12-venv python3.12-dev
-          ln -sf /usr/bin/python3.12 /usr/bin/python3
-          curl -sS https://bootstrap.pypa.io/get-pip.py | python3.12
-      - uses: actions/checkout@v6
-        with:
-          set-safe-directory: true
-      - name: Install Poetry
-        run: python3.12 -m pip install poetry
-      - name: Install dependencies
-        run: poetry install --no-interaction --no-root
-      - name: Build with PyInstaller
-        run: poetry run pyinstaller --clean --onefile --name cc-nano src/cc_nano/tui/app.py
-      - name: Rename executable
-        run: mv dist/cc-nano dist/cc-nano-linux-glibc
-      - name: Upload artifact
-        uses: actions/upload-artifact@v6
-        with:
-          name: cc-nano-linux-glibc
-          path: dist/cc-nano-linux-glibc
-
-  build-linux-musl:
-    name: Build Linux (musl static, Alpine container)
+  build-linux:
+    name: Build Linux (musl static, universal)
     runs-on: ubuntu-latest
     container:
       image: python:3.12-alpine
@@ -104,16 +67,16 @@ jobs:
       - name: Build with PyInstaller
         run: poetry run pyinstaller --clean --onefile --name cc-nano src/cc_nano/tui/app.py
       - name: Rename executable
-        run: mv dist/cc-nano dist/cc-nano-linux-musl
+        run: mv dist/cc-nano dist/cc-nano-linux
       - name: Upload artifact
         uses: actions/upload-artifact@v6
         with:
-          name: cc-nano-linux-musl
-          path: dist/cc-nano-linux-musl
+          name: cc-nano-linux
+          path: dist/cc-nano-linux
 
   release:
     name: Create Release and Upload Assets
-    needs: [build-windows, build-macos, build-linux-glibc, build-linux-musl]
+    needs: [build-windows, build-macos, build-linux]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -149,24 +112,12 @@ jobs:
             ```
             > 如果提示“无法验证开发者”，执行 `xattr -d com.apple.quarantine cc-nano-macos`
 
-            #### Linux 版本选择指南
+            #### Linux (通用)
+            **`cc-nano-linux` 是静态链接的 musl 二进制，可在任何 Linux x86_64 发行版上运行**（包括 Ubuntu 20.04、CentOS 7、Debian 11、Alpine 等）。
 
-            我们提供两个 Linux 二进制文件，覆盖所有主流发行版：
-
-            | 二进制文件 | 最低 glibc | 适用发行版（例） | 推荐使用场景 |
-            |-----------|-----------|----------------|--------------|
-            | `cc-nano-linux-glibc` | 2.31 | Ubuntu 20.04+, Debian 11+, RHEL 9+, Fedora 35+, openSUSE Leap 15.3+ | **大多数现代 Linux 用户** |
-            | `cc-nano-linux-musl` | 无依赖（静态链接） | **任何 Linux x86_64**（包括 CentOS 7, RHEL 7, Alpine, Ubuntu 等所有发行版） | **老旧系统（CentOS 7/RHEL 7）或追求最大兼容性** |
-
-            **使用建议：**
-            - 如果你使用 Ubuntu 20.04 或更新版本、Debian 11+、RHEL 9+、Fedora 35+，推荐使用 `cc-nano-linux-glibc`。
-            - 如果你使用 CentOS 7、RHEL 7、Alpine Linux，或 `glibc 2.31` 版本无法运行，请使用 `cc-nano-linux-musl`（静态链接，无系统依赖）。
-
-            **运行命令：**
             ```bash
-            # 下载对应的二进制文件后
-            chmod +x cc-nano-linux-*
-            ./cc-nano-linux-<版本>
+            chmod +x cc-nano-linux
+            ./cc-nano-linux
             ```
 
             ### 📄 源代码
@@ -179,12 +130,10 @@ jobs:
           files: |
             artifacts/**/cc-nano-windows.exe
             artifacts/**/cc-nano-macos
-            artifacts/**/cc-nano-linux-glibc
-            artifacts/**/cc-nano-linux-musl
+            artifacts/**/cc-nano-linux
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      # 同步到 Gitee（保持原有逻辑）
       - name: Sync Release to Gitee
         if: env.GITEE_TOKEN != ''
         env:
@@ -221,7 +170,7 @@ jobs:
           else
             echo "Release already exists (id=$RELEASE_ID)"
           fi
-          find artifacts -type f \( -name "cc-nano-windows.exe" -o -name "cc-nano-macos" -o -name "cc-nano-linux-glibc-2.31" -o -name "cc-nano-linux-musl" \) | while read file; do
+          find artifacts -type f \( -name "cc-nano-windows.exe" -o -name "cc-nano-macos" -o -name "cc-nano-linux" \) | while read file; do
             echo "Uploading $file ..."
             curl -s -X POST \
               -H "Authorization: token ${GITEE_TOKEN}" \
