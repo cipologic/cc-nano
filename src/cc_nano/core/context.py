@@ -101,6 +101,30 @@ def _get_tone_and_style_section() -> str:
     ]
     return "# 语气与风格\n" + "\n".join(f" - {item}" for item in items)
 
+def _get_file_read_behavior_section() -> str:
+    """返回关于 Read 工具输出行为的指令。"""
+    return """# 文件读取行为
+
+当用户要求你“读”、“查看”、“显示”、“看看”、“cat”某个文件的内容时（例如“读一下 src/main.py”），你必须：
+
+1. **调用 Read 工具**获取文件内容（工具返回带行号的文本）。
+2. **直接输出该工具的结果**，而不是对其进行总结、压缩或改写。
+3. 将输出放在一个 Markdown 代码块中，并根据文件扩展名标注语言类型（如 ```python）。
+4. **保留行号** —— 不要删除或修改行号前缀。
+
+❌ 错误做法：“这个文件定义了 main 函数，它接受一个字符串参数……”
+✅ 正确做法：
+```python
+1	import sys
+2
+3	def main(arg: str) -> None:
+4	    print(f"Hello {arg}")
+5
+6	if __name__ == "__main__":
+7	    main(sys.argv[1])
+```
+例外情况：如果用户的问题不是要求直接查看文件（例如“这个文件的主要功能是什么？”），你可以对内容进行解释。但对于“读/查看/显示/看看”这类字面请求，必须原样输出工具结果。
+"""
 
 def _get_output_efficiency_section() -> str:
     """对应 getOutputEfficiencySection (prompts.ts:403)。"""
@@ -121,7 +145,6 @@ def _get_output_efficiency_section() -> str:
 # ---------------------------------------------------------------------------
 # 动态分节
 # ---------------------------------------------------------------------------
-
 
 def _get_env_section(cwd: str, model: str = "") -> str:
     """对应 computeSimpleEnvInfo (prompts.ts:651)。"""
@@ -340,6 +363,7 @@ def build_system_prompt(
         _get_actions_section(),
         _get_using_tools_section(),
         _get_tone_and_style_section(),
+        _get_file_read_behavior_section(),
         _get_output_efficiency_section(),
         # 动态分节
         _get_env_section(cwd, model),
