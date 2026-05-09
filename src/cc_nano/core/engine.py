@@ -377,7 +377,7 @@ class Engine:
                             yield ("tool_call", tn, ti, act)
                             if tool and self._permissions.check(tool, ti) == "deny":
                                 denied_results[_block_id(tu)] = ToolResult(
-                                    content="权限被拒绝。", is_error=True
+                                    content="[ERROR] 权限被拒绝。", is_error=True
                                 )
                             else:
                                 approved.append((tu, tool, act))
@@ -441,7 +441,7 @@ class Engine:
 
                             if tool and self._permissions.check(tool, ti) == "deny":
                                 result = ToolResult(
-                                    content="权限被拒绝。", is_error=True
+                                    content="[ERROR] 权限被拒绝。", is_error=True
                                 )
                             else:
                                 yield ("tool_executing", tn, ti, act)
@@ -473,10 +473,10 @@ class Engine:
         tool_input = _block_input(tool_use)
         tool = self._tools.get(tool_name)
         if tool is None:
-            return ToolResult(content=f"未知工具：{tool_name}", is_error=True)
+            return ToolResult(content="[ERROR] 未知工具：{tool_name}", is_error=True)
 
         if not skip_permission and self._permissions.check(tool, tool_input) == "deny":
-            return ToolResult(content="权限被拒绝。", is_error=True)
+            return ToolResult(content="[ERROR] 权限被拒绝。", is_error=True)
 
         try:
             # 如果要跟踪的是写入类工具，则为其文件内容做快照（用于差异统计）
@@ -492,6 +492,9 @@ class Engine:
                     old_lines = None
 
             result = tool.execute(**tool_input)
+            # 为错误结果添加前缀
+            if result.is_error and not result.content.startswith("[ERROR]"):
+                result.content = f"[ERROR] {result.content}"
 
             # 为 Edit/Write 跟踪行数变化
             if self._cost_tracker and old_lines is not None and not result.is_error:
@@ -508,7 +511,8 @@ class Engine:
 
             return result
         except Exception as e:
-            return ToolResult(content=f"工具错误：{e}", is_error=True)
+            err_msg = f"工具错误：{e}"
+            return ToolResult(content=f"[ERROR] {err_msg}", is_error=True)
 
 
 def _block_type(block: Any) -> str | None:
