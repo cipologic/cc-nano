@@ -772,6 +772,8 @@ def main() -> None:
 
     def _apply_session_mode(session_mode: str | None) -> str | None:
         """根据会话模式重配当前引擎（用于 /resume）"""
+        from cc_nano.features.coordinator import match_session_mode
+
         warning = match_session_mode(session_mode)
         enabled = is_coordinator_mode()
 
@@ -806,6 +808,7 @@ def main() -> None:
                 current_app_config.model,
                 current_app_config.memory_dir,
                 current_skills_section,
+                project_root,
             )
             current_engine.system_prompt = new_system_prompt
 
