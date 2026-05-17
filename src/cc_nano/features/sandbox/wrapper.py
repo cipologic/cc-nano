@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import os
 import shlex
+import sys
 from pathlib import Path
 
 from .config import SandboxConfig
@@ -40,6 +41,13 @@ def build_bwrap_args(
     args.extend(["--dev", "/dev"])  # 最小化的 /dev
     args.extend(["--proc", "/proc"])  # /proc
     args.extend(["--tmpfs", "/tmp"])  # 临时文件系统
+
+    # === 确保当前 Python 解释器的标准库在沙箱内可访问 ===
+    # 在 WSL2 等环境中，--ro-bind / / 可能无法正确映射 pyenv 等非系统路径，
+    # 导致 Python 解释器找不到 encodings 等标准库模块。
+    # 从当前解释器的可执行文件路径反向推导真实的标准库位置（优于 sys.base_prefix，
+    # 因为 pyenv 编译的 Python 可能因 platlibdir 与安装路径不一致而导致 base_prefix 错误）。
+    _bind_python_stdlib(args)
 
     # === 可写目录 (bind) ===
     # 注意：这些 bind 挂载后，后续的 ro-bind（deny_write）可以覆盖子路径，使其只读。
@@ -122,6 +130,34 @@ def _resolve_paths(patterns: list[str], cwd: str) -> list[str]:
         else:
             resolved.append(str(Path(cwd) / p))
     return resolved
+
+
+def _bind_python_stdlib(args: list[str]) -> None:
+    """将当前 Python 解释器的标准库路径添加到 bwrap 绑定参数中。
+
+    pyenv 编译的 Python 有时会出现 platlibdir（如 lib64）与实际安装目录（如 lib）
+    不匹配的情况，导致解释器在 bwrap 沙箱内因 --ro-bind / / 的映射异常而无法找到
+    encodings 等标准库模块。此函数通过从 sys.executable 的 realpath 反向推导
+    真实的标准库路径，并将其显式绑定到沙箱中。
+    """
+    try:
+        real_exe = os.path.realpath(sys.executable)
+        prefix = str(Path(real_exe).parent.parent)
+        if os.path.exists(prefix) and prefix != "/":
+            # 绑定 lib/ 下的标准库（常见的安装位置）
+            lib_path = os.path.join(prefix, "lib")
+            if os.path.exists(lib_path):
+                args.extend(["--ro-bind", lib_path, lib_path])
+            # 部分系统使用 lib64/，也一并绑定（如已通过 lib 绑定覆盖则无影响）
+            lib64_path = os.path.join(prefix, "lib64")
+            if os.path.exists(lib64_path):
+                args.extend(["--ro-bind", lib64_path, lib64_path])
+            # 绑定可执行文件所在 bin/ 目录
+            bin_path = os.path.join(prefix, "bin")
+            if os.path.exists(bin_path):
+                args.extend(["--ro-bind", bin_path, bin_path])
+    except Exception:
+        pass  # 静默失败——绑定是优化而非必需
 
 
 def _get_protected_paths(cwd: str) -> list[str]:
