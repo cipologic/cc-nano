@@ -292,8 +292,8 @@ class PlanModeManager:
             plan_tools.extend(
                 [
                     AgentTool(
-                        self._plan_worker_manager
-                    ),  # 注意：AgentTool 需要传入 plan_manager
+                        self._plan_worker_manager, plan_manager=self
+                    ),
                     SendMessageTool(self._plan_worker_manager),
                     TaskStopTool(self._plan_worker_manager),
                 ]

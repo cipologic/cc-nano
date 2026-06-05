@@ -8,7 +8,7 @@ import re
 from pathlib import Path
 
 _IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".gif", ".webp"}
-_IMG_PATH_RE = re.compile(r"@(\S+)")
+_IMG_PATH_RE = re.compile(r"@(\S+?\.(?:png|jpg|jpeg|gif|webp))\b", re.IGNORECASE)
 
 
 def parse_input(text: str) -> str | list:
@@ -26,6 +26,9 @@ def parse_input(text: str) -> str | list:
         if fpath.suffix.lower() not in _IMAGE_EXTS:
             continue
         if not fpath.exists():
+            continue
+        file_size = fpath.stat().st_size
+        if file_size > 10 * 1024 * 1024:  # 超过 10MB 跳过
             continue
         media_type = mimetypes.guess_type(str(fpath))[0] or "image/png"
         data = base64.standard_b64encode(fpath.read_bytes()).decode("ascii")

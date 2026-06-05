@@ -393,37 +393,37 @@ def _cmd_model(ctx: CommandContext, args: str) -> None:
     kb = KeyBindings()
 
     @kb.add("up")
-    def _(e):
+    def _up(e):
         cursor.__setitem__(0, (cursor[0] - 1) % len(options))
 
     @kb.add("down")
-    def _(e):
+    def _down(e):
         cursor.__setitem__(0, (cursor[0] + 1) % len(options))
 
     @kb.add("left")
-    def _(e):
+    def _left(e):
         effort_idx.__setitem__(0, (effort_idx[0] - 1) % len(effort_levels))
 
     @kb.add("right")
-    def _(e):
+    def _right(e):
         effort_idx.__setitem__(0, (effort_idx[0] + 1) % len(effort_levels))
 
     @kb.add("enter")
-    def _(e):
+    def _confirm(e):
         result[0] = options[cursor[0]][0]
         e.app.exit()
 
     for i in range(min(len(options), 9)):
 
         @kb.add(str(i + 1))
-        def _(e, idx=i):
+        def _select(e, idx=i):
             cursor[0] = idx
             result[0] = options[idx][0]
             e.app.exit()
 
     @kb.add("escape")
     @kb.add("c-c")
-    def _(e):
+    def _cancel(e):
         e.app.exit()
 
     def _tokens():
@@ -525,20 +525,6 @@ def _cmd_plan(ctx: CommandContext, args: str) -> None:
         description = args.strip()
         if description:
             ctx.pending_query = description
-
-
-def _cmd_advisor(ctx: CommandContext, args: str) -> None:
-    """切换顾问模式（在推理时咨询更强的模型）。"""
-    engine = ctx.engine
-    if engine._provider != "anthropic":
-        ctx.console.print("[red]顾问模式仅适用于 Anthropic 提供商[/red]")
-        return
-    enabled = engine.toggle_advisor()
-    status = "已启用" if enabled else "已禁用"
-    ctx.console.print(
-        f"[green]顾问模式 {status}[/green]"
-        f"  （模型：{engine._advisor_model}，最大使用次数：{engine._advisor_max_uses}）"
-    )
 
 
 # （命令名，描述，处理器）

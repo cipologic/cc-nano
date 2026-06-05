@@ -225,9 +225,7 @@ class CostTracker:
     def add_usage(self, model: str, usage: dict, api_duration_s: float = 0.0) -> float:
         """记录 token 数量，并返回本次调用的成本。"""
         cost = self.calculate_cost(model, usage)
-        # 调试信息
-        # print(f"[DEBUG] model={model}, input={usage.get('input_tokens')}, output={usage.get('output_tokens')}, cost={cost}")
-        # traceback.print_stack(limit=3)
+        # 调试信息（已清理）
 
         self._total_cost_usd += cost
         self._total_api_duration_s += api_duration_s

@@ -195,7 +195,6 @@ def game_toolbar(session_getter: Any) -> str:
     if not session:
         return ""
     hp = session.stats.get("HP", 0)
-    hp_color = "ansired" if hp < 30 else ("ansiyellow" if hp < 60 else "ansigreen")
     return (
         f" HP:{hp} | ATK:{session.stats.get('ATK',0)} "
         f"DEF:{session.stats.get('DEF',0)} SPD:{session.stats.get('SPD',0)} "

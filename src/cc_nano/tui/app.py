@@ -23,7 +23,7 @@ from cc_nano.commands.project_commands import (handle_change, handle_delete,
                                                handle_list, handle_new,
                                                handle_status)
 from cc_nano.core.config import AppConfig, load_app_config
-from cc_nano.core.context import build_system_prompt
+from cc_nano.core.context import build_system_prompt, build_system_prompt_for_mode as system_prompt_builder
 from cc_nano.core.engine import Engine
 from cc_nano.core.permissions import PermissionChecker
 from cc_nano.core.project import (find_project_root,
@@ -36,6 +36,7 @@ from cc_nano.features.compact import (CompactService, estimate_tokens,
 from cc_nano.features.coordinator import (current_session_mode,
                                           get_worker_system_prompt,
                                           is_coordinator_mode,
+                                          is_teamwork_mode,
                                           set_coordinator_mode,
                                           set_teamwork_mode)
 from cc_nano.features.cost_tracker import CostTracker
@@ -61,8 +62,8 @@ from cc_nano.tui.shell import handle_sandbox_command, run_shell
 
 console = Console()
 
-# 使用双击超时 DOUBLE_PRESS_TIMEOUT_MS = 800
-_DOUBLE_PRESS_TIMEOUT_MS = 0.8
+# 使用双击超时（单位：秒，对应注释中 800ms）
+_DOUBLE_PRESS_TIMEOUT_S = 0.8
 
 
 def _run_dream(
@@ -79,6 +80,11 @@ def _run_dream(
     对应 TS 的 autoDream.ts —— 自动梦境（quiet=True）会隔离权限；
     手动 /dream 使用正常权限（与 TS 行为一致）。
     """
+    if engine is None:
+        if not quiet:
+            console.print("[dim]引擎未配置，跳过梦境。[/dim]")
+        return
+
     if not quiet:
         console.print("[dim]开始梦境整合…[/dim]")
 
@@ -102,16 +108,19 @@ def _run_dream(
     dream_permissions.push_mode("dream", extra={"memory_dir": str(memory_dir)})
 
     # 从主引擎获取配置
+    provider = engine._provider if engine else None
+    api_key = engine._client._api_key if engine and engine._client else None
+    base_url = engine._client._base_url if engine and engine._client else None
     dream_engine = Engine(
         tools=dream_tools,
         system_prompt="",  # 临时，稍后设置
         permission_checker=dream_permissions,
-        provider=engine._provider,
-        api_key=engine._client._api_key,
-        base_url=engine._client._base_url,
-        model=model or engine._model,
-        max_tokens=engine._max_tokens,
-        effort=engine._effort,
+        provider=provider,
+        api_key=api_key,
+        base_url=base_url,
+        model=model or (engine._model if engine else None),
+        max_tokens=engine._max_tokens if engine else 8192,
+        effort=engine._effort if engine else None,
         session_store=None,  # 梦境不持久化到会话存储
     )
 
@@ -210,45 +219,6 @@ def _build_tools_for_mode(
             ]
         )
     return tools
-
-
-def _build_system_prompt_for_mode(
-    coordinator_enabled: bool,
-    cwd: str,
-    model: str,
-    memory_dir: Path,
-    skills_section: str,
-    project_root: Path,
-) -> str:
-    """根据模式构建系统提示（原函数从 main 中提取，参数化）"""
-    prompt = build_system_prompt(cwd=cwd, model=model, memory_dir=memory_dir)
-    if skills_section:
-        prompt += "\n\n" + skills_section
-    if is_coordinator_mode():
-        # 团队模式优先
-        from cc_nano.features.coordinator import (get_teamwork_system_prompt,
-                                                  is_teamwork_mode)
-
-        if is_teamwork_mode():
-            prompt += "\n\n" + get_teamwork_system_prompt(project_root)
-        elif coordinator_enabled:
-            from cc_nano.features.coordinator import (
-                get_coordinator_system_prompt, get_coordinator_user_context)
-
-            worker_tool_names = [
-                "FileReadTool",
-                "GlobTool",
-                "GrepTool",
-                "FileEditTool",
-                "FileWriteTool",
-                "BashTool",
-            ]
-            extra = get_coordinator_user_context(worker_tool_names)
-            worker_context = extra.get("workerToolsContext")
-            if worker_context:
-                prompt += "\n\n# 协调者上下文\n" + worker_context
-            prompt += "\n\n" + get_coordinator_system_prompt()
-    return prompt
 
 
 def _build_worker_engine(
@@ -359,6 +329,7 @@ def _build_engine_from_config(
     worker_manager: object,
     plan_manager: object,
     is_coordinator: bool,
+    is_teamwork: bool,
     skills_section: str,
     sandbox_mgr: object,
     project_root: Path,
@@ -368,8 +339,9 @@ def _build_engine_from_config(
         tools = _build_tools_for_mode(
             is_coordinator, worker_manager, plan_manager, todo_manager, sandbox_mgr
         )
-        system_prompt = _build_system_prompt_for_mode(
-            is_coordinator,
+        mode = "teamwork" if is_teamwork else ("coordinator" if is_coordinator else "normal")
+        system_prompt = system_prompt_builder(
+            mode,
             cwd,
             app_config.model,
             app_config.memory_dir,
@@ -406,6 +378,7 @@ def _reload_environment(
     sandbox_mgr: SandboxManager,
     skills_section: str,
     is_coordinator: bool,
+    is_teamwork: bool, 
 ) -> None:
     """热重载配置、引擎、会话存储和工作管理器"""
     # 重新确定项目根（开始）=========================================
@@ -439,7 +412,18 @@ def _reload_environment(
     else:
         new_session_store = state.get("session_store")
 
-    # 3. 重建 worker_manager（工厂函数捕获新配置）
+    # 3. 重建 worker_manager（根据团队模式动态调整技能白名单）
+    if is_teamwork:
+        worker_allowed_skills = [
+            "simplify", "test", "commit",
+            "role/architect", "role/techlead", "role/planreviewer",
+            "role/implementer", "role/reviewer", "role/qa", "root-cause"
+        ]
+        explore_allowed_skills = ["review", "role/architect"]
+    else:
+        worker_allowed_skills = ["simplify", "test", "commit"]
+        explore_allowed_skills = ["review"]
+    
     def _worker_factory():
         return _build_worker_engine(
             sandbox_mgr,
@@ -448,7 +432,7 @@ def _reload_environment(
             new_config.provider,
             new_config.memory_dir,
             skills_section,
-            allowed_skills=["simplify", "test", "commit"],
+            allowed_skills=worker_allowed_skills,
             api_key=new_config.api_key,
             base_url=new_config.base_url,
             max_tokens=new_config.max_tokens,
@@ -462,7 +446,7 @@ def _reload_environment(
             new_config.model,
             new_config.provider,
             new_config.memory_dir,
-            allowed_skills=["review"],
+            allowed_skills=explore_allowed_skills,
             api_key=new_config.api_key,
             base_url=new_config.base_url,
             max_tokens=new_config.max_tokens,
@@ -495,6 +479,7 @@ def _reload_environment(
         worker_manager=new_worker_manager,
         plan_manager=plan_manager,
         is_coordinator=is_coordinator,
+        is_teamwork=is_teamwork,
         skills_section=skills_section,
         sandbox_mgr=sandbox_mgr,
         project_root=new_root,
@@ -510,8 +495,11 @@ def _reload_environment(
                 new_config.model,
                 new_config.provider,
                 new_config.memory_dir,
-                True,
-                ["review"],
+                explore_allowed_skills,
+                api_key=new_config.api_key,
+                base_url=new_config.base_url,
+                max_tokens=new_config.max_tokens,
+                effort=new_config.effort,
             ),
         )
     else:
@@ -720,7 +708,7 @@ def main() -> None:
     cost_tracker = CostTracker()
 
     # 初始化状态容器并首次热重载 ==========
-    state = {
+    state: dict[str, Any] = {
         "app_config": None,
         "engine": None,
         "session_store": None,
@@ -735,6 +723,7 @@ def main() -> None:
     }
 
     coordinator_enabled = is_coordinator_mode()
+    teamwork_enabled = is_teamwork_mode()
     _reload_environment(
         state,
         args,
@@ -746,7 +735,9 @@ def main() -> None:
         sandbox_mgr,
         skills_section,
         coordinator_enabled,
+        teamwork_enabled,
     )
+
     engine = state["engine"]
     session_store = state["session_store"]
     app_config = state["app_config"]
@@ -763,8 +754,11 @@ def main() -> None:
                 app_config.model,
                 app_config.provider,
                 app_config.memory_dir,
-                True,
                 ["review"],
+                api_key=app_config.api_key,
+                base_url=app_config.base_url,
+                max_tokens=app_config.max_tokens,
+                effort=app_config.effort,
             ),
         )
         plan_manager.set_permissions(permissions)
@@ -775,7 +769,8 @@ def main() -> None:
         from cc_nano.features.coordinator import match_session_mode
 
         warning = match_session_mode(session_mode)
-        enabled = is_coordinator_mode()
+        is_coord = is_coordinator_mode()
+        is_team = is_teamwork_mode()
 
         # 从 state 中获取最新对象（支持热重载后更新）
         current_engine = state.get("engine")
@@ -793,7 +788,7 @@ def main() -> None:
         # 重新构建工具集和系统提示
         if current_sandbox_mgr is not None:
             new_tools = _build_tools_for_mode(
-                enabled,
+                is_coord,
                 current_worker_manager,
                 current_plan_manager,
                 current_todo_manager,
@@ -802,8 +797,9 @@ def main() -> None:
             current_engine.set_tools(new_tools)
 
         if current_app_config:
-            new_system_prompt = _build_system_prompt_for_mode(
-                enabled,
+            mode = session_mode or "normal"
+            new_system_prompt = system_prompt_builder(
+                mode,
                 cwd,
                 current_app_config.model,
                 current_app_config.memory_dir,
@@ -1121,6 +1117,7 @@ def main() -> None:
                             sandbox_mgr,
                             skills_section,
                             is_coordinator_mode(),
+                            is_teamwork_mode(),
                         )
                         engine = state["engine"]
                         session_store = state["session_store"]
@@ -1136,17 +1133,19 @@ def main() -> None:
                                     app_config.model,
                                     app_config.provider,
                                     app_config.memory_dir,
-                                    True,
                                     ["review"],
+                                    api_key=app_config.api_key,
+                                    base_url=app_config.base_url,
+                                    max_tokens=app_config.max_tokens,
+                                    effort=app_config.effort,
                                 ),
                             )
                     continue  # 跳过正常查询
         except KeyboardInterrupt:
             now = time.monotonic()
-            if now - last_ctrlc_time <= _DOUBLE_PRESS_TIMEOUT_MS:
+            if now - last_ctrlc_time <= _DOUBLE_PRESS_TIMEOUT_S:
                 _exiting = True
-                if animator:
-                    animator.stop()
+                # animator.stop() 由 finally 块处理
                 console.print("\n[dim]再见。[/dim]")
                 break
             last_ctrlc_time = now
@@ -1427,7 +1426,6 @@ def main() -> None:
                                 session_ids=_sids,
                                 model=app_config.model,
                             )
-                            release_lock(memory_dir)
                         except Exception:
                             # 记录完整堆栈到 stderr 和日志文件
                             error_msg = traceback.format_exc()
@@ -1455,6 +1453,8 @@ def main() -> None:
                                     os.utime(lp, (_prior_mtime, _prior_mtime))
                             except OSError:
                                 pass
+                        finally:
+                            release_lock(memory_dir)
 
                     threading.Thread(target=_bg_dream, daemon=True).start()
 

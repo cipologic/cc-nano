@@ -253,7 +253,9 @@ def _run_game(companion, console: Console) -> None:
         term_width, term_height = 120, 40
 
     # 可变游戏 UI 状态
-    ui = {
+    from typing import Any
+
+    ui: dict[str, Any] = {
         "screen": MAIN_MENU,
         "cursor": 0,
         "log_buffer": [],

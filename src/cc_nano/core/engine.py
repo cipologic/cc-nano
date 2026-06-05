@@ -349,7 +349,7 @@ class Engine:
                 tool_results = []
 
                 # 分批：连续的只读工具并行执行；非只读工具单独执行。
-                batches: list[list] = []
+                batches: list[tuple[bool, list]] = []
                 for tu in tool_uses:
                     t = self._tools.get(_block_name(tu))
                     is_concurrent = t is not None and t.is_read_only()
@@ -473,7 +473,7 @@ class Engine:
         tool_input = _block_input(tool_use)
         tool = self._tools.get(tool_name)
         if tool is None:
-            return ToolResult(content="[ERROR] 未知工具：{tool_name}", is_error=True)
+            return ToolResult(content=f"[ERROR] 未知工具：{tool_name}", is_error=True)
 
         if not skip_permission and self._permissions.check(tool, tool_input) == "deny":
             return ToolResult(content="[ERROR] 权限被拒绝。", is_error=True)
@@ -492,7 +492,7 @@ class Engine:
                     old_lines = None
 
             result = tool.execute(**tool_input)
-            # 为错误结果添加前缀
+            # 为错误结果添加 [ERROR] 前缀（避免重复添加）
             if result.is_error and not result.content.startswith("[ERROR]"):
                 result.content = f"[ERROR] {result.content}"
 

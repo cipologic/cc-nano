@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from typing import Any, Iterator
+from typing import Any, Iterator, Union
 
 import anthropic
 import httpx
@@ -79,7 +79,8 @@ def default_model_for_provider(provider: str) -> str:
     provider = validate_provider(provider)
     if provider == _OPENAI_PROVIDER:
         return "deepseek-v4-flash"
-    return "gpt-5.1-codex"
+    # Anthropic provider 默认使用 Claude Sonnet 4
+    return "claude-sonnet-4-20250514"
 
 
 def default_companion_model(provider: str, model: str) -> str:
@@ -120,6 +121,7 @@ class LLMClient:
         self.provider = validate_provider(provider)
         self._api_key = api_key
         self._base_url = base_url
+        self._client: OpenAI | anthropic.Anthropic | None = None
 
         # API key 有效性检查
         if self.provider == _ANTHROPIC_PROVIDER:
@@ -342,6 +344,8 @@ class _AnthropicStream:
             pass
 
     def get_final_message(self) -> LLMMessage:
+        if self._ctx is None:
+            return LLMMessage(content=[], usage=None, stop_reason=None)
         final = self._ctx.get_final_message()
         return LLMMessage(
             content=_normalize_anthropic_content(getattr(final, "content", [])),
@@ -381,6 +385,10 @@ class _OpenAIStream:
 
     def __enter__(self):
         self._stream = self._client.chat.completions.create(**self._params)
+        if self._stream is None:
+            raise RuntimeError(
+                f"OpenAI stream API returned None for model={self._params.get('model', '?')}"
+            )
         self.text_stream = self._iter_text()
         return self
 
@@ -393,6 +401,8 @@ class _OpenAIStream:
             self._stream.close()
 
     def _iter_text(self) -> Iterator[str]:
+        if self._stream is None:
+            return
         for chunk in self._stream:
             usage = getattr(chunk, "usage", None)
             if usage is not None:

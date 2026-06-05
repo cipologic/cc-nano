@@ -47,7 +47,7 @@ def auto_event(session: GameSession, log_fn: Callable[[str], None]) -> None:
             state.apply_stat_change("HP", 15)
             log_fn("   幸运地找到了治愈草药！(HP+15)")
         else:
-            result = _pray_to_god(session, log_fn)
+            _pray_to_god(session, log_fn)
 
     elif event_id == "hungry":
         log_fn(f"🍖 {name} 的肚子咕咕叫了起来...")
@@ -141,7 +141,6 @@ def _pray_to_god(session: GameSession, log_fn: Callable[[str], None]) -> None:
     """伙伴向神灵祈祷寻求治疗 — 随机惩罚。"""
     from . import state
 
-    name = session.companion_name
     roll = random.random()
 
     if roll < 0.50:

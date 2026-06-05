@@ -12,7 +12,7 @@ import time
 import uuid
 from dataclasses import dataclass, field
 from queue import Empty, Queue
-from typing import Callable
+from typing import Any, Callable
 from xml.sax.saxutils import escape
 
 from cc_nano.core.engine import AbortedError
@@ -29,7 +29,7 @@ class WorkerUsage:
 class WorkerTask:
     task_id: str
     description: str
-    engine: object
+    engine: Any  # Engine 实例，运行时通过 duck typing 使用 .abort()/.submit()
     status: str = "idle"
     summary: str = ""
     result: str = ""
@@ -190,7 +190,8 @@ class WorkerManager:
                 return f"{role_prompt}\n\n## 任务\n\n{original_prompt}"
             else:
                 # 如果角色技能不存在，仅输出警告（不阻断）
-                print(f"[WorkerManager] 警告：未找到角色技能 role/{task.role.lower()}")
+                import sys
+                print(f"[WorkerManager] 警告：未找到角色技能 role/{task.role.lower()}", file=sys.stderr)
         except Exception:
             pass
         return original_prompt

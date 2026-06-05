@@ -501,10 +501,13 @@ def save_session(messages: list[dict], session_id: str) -> None:
         for msg in messages:
             f.write(json.dumps(serialize_message(msg), default=str) + "\n")
 
-    # 更新符号链接
+    # 更新符号链接（使用临时链接原子替换）
+    import tempfile
+
     link = _get_sessions_dir() / "last-session"
-    link.unlink(missing_ok=True)
-    link.symlink_to(path.name)
+    tmp_link = _get_sessions_dir() / f".last-session.{os.getpid()}.tmp"
+    tmp_link.symlink_to(path.name)
+    tmp_link.replace(link)
 
 
 def load_session(session_id: str | None = None) -> list[dict] | None:

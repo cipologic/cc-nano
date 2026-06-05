@@ -164,8 +164,6 @@ def _pet_animation(console: Console) -> None:
     ]
 
     # 兴奋模式：快速循环所有精灵帧
-    frame_count = len([f for f in [0, 1, 2]])
-
     with Live(console=console, refresh_per_second=4, transient=True) as live:
         for i, heart_line in enumerate(pet_hearts):
             sprite_lines = render_sprite(bones, frame=i % 3)

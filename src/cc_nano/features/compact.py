@@ -195,6 +195,8 @@ class CompactService:
 
             [user: 摘要] [assistant: 确认] [保留的最近消息 …]
         """
+        if self._client is None:
+            return list(messages), "(客户端未就绪，跳过压缩)"
         history, recent = _split_recent(messages)
 
         if not history:

@@ -172,7 +172,7 @@ class CompanionAnimator:
             sprite_lines_full.append(heart_line)
         sprite_lines_full.extend(lines)
 
-        max_sw = max((len(l) for l in sprite_lines_full), default=12)
+        max_sw = max((len(line) for line in sprite_lines_full), default=12)
 
         # 样式名称
         s_sprite = f"fg:{_rich_to_ansi(color)}"
@@ -203,7 +203,7 @@ class CompanionAnimator:
 
         return result
 
-    def _wrap_bubble(self, text: str, fading: bool) -> list[str]:
+    def _wrap_bubble(self, text: str, fading: bool = False) -> list[str]:
         """将文本换行并加上边框，生成对话气泡行。"""
         max_w = 30
         words = text.split()
@@ -220,12 +220,12 @@ class CompanionAnimator:
         if not wrapped:
             return []
 
-        width = max(len(l) for l in wrapped)
+        width = max(len(line) for line in wrapped)
         border = "\u256d" + "\u2500" * (width + 2) + "\u256e"  # 圆角边框
         bottom = "\u2570" + "\u2500" * (width + 2) + "\u256f"
         lines = [border]
-        for l in wrapped:
-            lines.append(f"\u2502 {l:<{width}} \u2502")
+        for line in wrapped:
+            lines.append(f"\u2502 {line:<{width}} \u2502")
         lines.append(bottom)
         return lines
 

@@ -226,7 +226,7 @@ def _load_file_values(
     """从指定的 TOML 文件加载配置，如果 explicit_path 为 None 则返回空。"""
     values: dict[str, Any] = {
         "top": {},
-        "providers": {"openai": {}},
+        "providers": {"openai": {}, "anthropic": {}},
     }
     loaded_paths: list[Path] = []
 
@@ -288,6 +288,10 @@ def _load_env_values() -> dict[str, Any]:
         values["openai_api_key"] = os.environ["OPENAI_API_KEY"]
     if os.getenv("OPENAI_BASE_URL"):
         values["openai_base_url"] = os.environ["OPENAI_BASE_URL"]
+    if os.getenv("ANTHROPIC_API_KEY"):
+        values["anthropic_api_key"] = os.environ["ANTHROPIC_API_KEY"]
+    if os.getenv("ANTHROPIC_BASE_URL"):
+        values["anthropic_base_url"] = os.environ["ANTHROPIC_BASE_URL"]
     if os.getenv(_ENV_MODEL):
         values["model"] = os.environ[_ENV_MODEL]
     if os.getenv(_ENV_MAX_TOKENS):
@@ -343,7 +347,7 @@ def _infer_provider(provider_values: dict[str, dict[str, Any]]) -> str:
 def _merge_file_values(target: dict[str, Any], incoming: dict[str, Any]) -> None:
     """合并两个文件值字典"""
     target["top"].update(incoming.get("top", {}))
-    for provider in ("openai",):
+    for provider in ("openai", "anthropic"):
         target["providers"][provider].update(
             incoming.get("providers", {}).get(provider, {})
         )
@@ -352,14 +356,13 @@ def _merge_file_values(target: dict[str, Any], incoming: dict[str, Any]) -> None
 def _provider_env_values(env_values: dict[str, Any], provider: str) -> dict[str, Any]:
     """根据提供商提取对应的环境变量值"""
     provider = validate_provider(provider)
-    if provider == "deepseek":
-        provider = "openai"
     if provider == "openai":
         return {
             "api_key": env_values.get("openai_api_key"),
             "base_url": env_values.get("openai_base_url"),
         }
+    # Anthropic provider
     return {
-        "api_key": env_values.get("openai_api_key"),
-        "base_url": env_values.get("openai_base_url"),
+        "api_key": env_values.get("anthropic_api_key"),
+        "base_url": env_values.get("anthropic_base_url"),
     }
