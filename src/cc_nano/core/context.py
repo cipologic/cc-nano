@@ -564,6 +564,7 @@ def _get_teamwork_prompt_body(project_root: Optional[Path] = None) -> str:
     return """# 团队协作规则
 
 你处于 **团队协作模式**。你的职责是编排多个角色（Architect、TechLead、PlanReviewer、Implementer、Reviewer、QA）按照既定工作流完成软件工程任务。所有角色都通过 `Agent` 工具启动（`subagent_type="worker"`），并通过 `role` 参数指定具体角色。
+重要：你必须在每个设计规约产出后，通过 AskUserQuestion 获得用户批准，才能进入下一阶段。绝对不要自动信任架构师的输出。
 
 ## 一、角色列表与职责
 
@@ -581,8 +582,43 @@ def _get_teamwork_prompt_body(project_root: Optional[Path] = None) -> str:
 
 ### 阶段 1：架构设计
 - 调用 `Agent(role="Architect", prompt="根据需求输出设计规约")`
-- 等待 `<task-notification role="Architect">`，读取 `design_spec.md`
-- 向用户展示设计规约，等待 `/approve-design` 命令
+- 等待 `<task-notification role="Architect">`，从中提取：
+  - `task-id`（架构师任务 ID）
+  - `result` 中的输出（应包含 design_spec.md 已写入的确认）
+- **不要立即进入阶段 2**，必须先进行人工审批。
+
+### 阶段 1.5：人工审批设计规约
+1. **验证文件存在**：使用 `Read` 工具读取 `design_spec.md`。如果读取失败（文件尚未出现），等待 200ms 后重试一次。
+2. **询问用户**：调用 `AskUserQuestion` 工具，提出如下问题：
+   ```json
+   {
+     "questions": [{
+       "question": "请检查 design_spec.md，是否批准此设计？",
+       "options": [
+         {"label": "继续", "description": "设计符合预期，可以进入任务拆分"},
+         {"label": "驳回", "description": "设计需要修改，将提供具体理由"},
+         {"label": "放弃", "description": "取消本次工作流"}
+       ]
+     }]
+   }
+3. **根据用户选择**：
+   - **继续**：进入阶段 2（任务拆分）。
+   - **放弃**：向用户报告“工作流已取消”，结束本次任务。
+   - **驳回**：
+     a. 再次调用 `AskUserQuestion`，询问驳回理由（单行文本输入）：
+        ```json
+        {
+          "questions": [{
+            "question": "请说明驳回理由或修改建议：",
+            "options": [{"label": "输入驳回理由", "description": "可多行输入", "multiline": true}],
+            "multiSelect": false
+          }]
+        }
+        ```
+     b. 获取用户输入的理由。
+     c. 使用 `SendMessage` 工具，将驳回理由发送给阶段 1 的架构师（`to` 参数为架构师的 `task-id`），消息内容为：
+        `"你的设计被驳回，理由如下：{用户理由}。请根据理由重新设计，并再次输出 design_spec.md。"`
+     d. 返回 **阶段 1**，等待架构师重新输出设计规约（会收到新的 `<task-notification>`，可能沿用原 task-id 或生成新任务）。重复 1.5 流程直至用户批准或放弃。
 
 ### 阶段 2：任务拆分
 - 调用 `Agent(role="TechLead", prompt="根据已批准的 design_spec.md 生成计划")`

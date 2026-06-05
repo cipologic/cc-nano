@@ -26,12 +26,15 @@ _OTHER = "__other__"
 
 
 def _select_one(
-    question: str, labels: list[str], descriptions: list[str]
+    question: str, labels: list[str], descriptions: list[str], multilines: list[bool]
 ) -> str | None:
     """支持箭头键导航的单选菜单。
 
     最后一个选项总是“其他”，当焦点在其上时显示内联文本输入。
     返回选中的标签、“其他”时输入的文本，取消时返回 ``None``。
+
+    如果所选选项的 multiline=True，
+    则弹出多行编辑器（以空行结束，或 Ctrl+D 提交）。
     """
     from prompt_toolkit import Application
     from prompt_toolkit.key_binding import KeyBindings
@@ -63,13 +66,21 @@ def _select_one(
 
     @kb.add("enter")
     def _enter(event):
+        idx = cursor[0]
         if _on_other():
             if text_buf[0]:
                 result.append(text_buf[0])
             else:
                 result.append(_OTHER)  # 空“其他” = 取消
         else:
-            result.append(labels[cursor[0]])
+            # 如果该选项支持多行，则弹出多行输入框
+            if multilines[idx]:
+                val = _multiline_input(f"请输入 {labels[idx]} 的内容（多行）：")
+                if val is None:
+                    return  # 取消，不退出菜单
+                result.append(val)
+            else:
+                result.append(labels[idx])
         event.app.exit()
 
     # --- Esc / Ctrl-C -------------------------------------------------------
@@ -118,8 +129,15 @@ def _select_one(
                     cursor[0] = other_idx
                 else:
                     # 数字键在普通选项上：立即选择
-                    result.append(labels[idx])
-                    event.app.exit()
+                    # 如果该选项支持多行，弹出多行输入
+                    if multilines[idx]:
+                        val = _multiline_input(f"请输入 {labels[idx]} 的内容（多行）：")
+                        if val is not None:
+                            result.append(val)
+                            event.app.exit()
+                    else:
+                        result.append(labels[idx])
+                        event.app.exit()
             return
 
         # 在普通选项上按非数字字符 -> 跳转到“其他”并开始输入
@@ -150,7 +168,9 @@ def _select_one(
                         ("ansigray" if not is_cur else style, f"{prefix}{i+1}) {label}")
                     )
             else:
-                tokens.append((style, f"{prefix}{i+1}) {label}"))
+                # 普通选项：如果支持多行，添加提示图标
+                marker = " ✎" if multilines[i] else ""
+                tokens.append((style, f"{prefix}{i+1}) {label}{marker}"))
                 if desc:
                     tokens.append(("ansigray", f" — {desc}"))
             tokens.append(("", "\n"))
@@ -159,7 +179,7 @@ def _select_one(
         if _on_other() and text_buf[0]:
             tokens.append(("ansigray", "  ↵ 提交 · esc 清除"))
         else:
-            tokens.append(("ansigray", "  ↑↓ 导航 · ↵ 选择"))
+            tokens.append(("ansigray", "  ↑↓ 导航 · ↵ 选择 · ✎ 多行输入"))
         return tokens
 
     control = FormattedTextControl(_get_tokens)
@@ -180,13 +200,16 @@ def _select_one(
 
 
 def _select_multi(
-    question: str, labels: list[str], descriptions: list[str]
+    question: str, labels: list[str], descriptions: list[str], multilines: list[bool]
 ) -> list[str] | None:
     """支持箭头键导航的多选菜单，带有内联“其他”文本输入。
 
     空格键切换选中状态，回车确认。与官方行为一致：
     箭头键始终可以导航，在“其他”上键入进入文本缓冲区，
     空格键切换对勾。
+
+    如果某个选项的 multilines[idx] 为 True，且用户选中了该选项，
+    则在最终确认后弹出多行输入框，输入的内容会作为该选项的值。
     """
     from prompt_toolkit import Application
     from prompt_toolkit.key_binding import KeyBindings
@@ -324,9 +347,46 @@ def _select_multi(
             if text_buf[0]:
                 results.append(text_buf[0])
         else:
-            results.append(labels[i])
-    return results
+            if multilines[i]:
+                val = _multiline_input(f"请输入 {labels[i]} 的内容（多行）：")
+                if val is not None:
+                    results.append(val)
+                # 如果用户取消了多行输入，则忽略该选项
+            else:
+                results.append(labels[i])
+    return results if results else None
 
+def _multiline_input(prompt: str) -> str | None:
+    """
+    多行文本输入，返回输入的字符串，取消时返回 None。
+    用户按 Ctrl+D 提交，按 ESC 或 Ctrl+C 取消。
+    """
+    from prompt_toolkit import PromptSession
+    from prompt_toolkit.key_binding import KeyBindings
+
+    kb = KeyBindings()
+    result = [None]
+
+    @kb.add("c-c")
+    @kb.add("escape")
+    def _(event):
+        result[0] = None
+        event.app.exit()
+
+    @kb.add("c-d")
+    def _(event):
+        # Ctrl+D 提交当前内容
+        buf = event.app.current_buffer
+        result[0] = buf.text
+        event.app.exit()
+
+    session = PromptSession(message=prompt, key_bindings=kb, multiline=True)
+    try:
+        text = session.prompt()
+        # 如果用户直接按回车（空字符串），视为取消
+        return text if text else None
+    except (EOFError, KeyboardInterrupt):
+        return None
 
 # ---------------------------------------------------------------------------
 # 工具类
@@ -373,6 +433,7 @@ class AskUserQuestionTool(Tool):
                                     "properties": {
                                         "label": {"type": "string"},
                                         "description": {"type": "string"},
+                                        "multiline": {"type": "boolean", "default": False},
                                     },
                                     "required": ["label", "description"],
                                 },
@@ -408,14 +469,16 @@ class AskUserQuestionTool(Tool):
             # 构建标签/描述列表 —— 追加“其他”（输入选项，无描述）
             labels = [o["label"] for o in options] + ["其他"]
             descs = [o.get("description", "") for o in options] + [""]
+            # 多行标志列表：对于每个选项，如果配置了 multiline: true，则标记为 True
+            multilines = [o.get("multiline", False) for o in options] + [False]
 
             if multi:
-                selected = _select_multi(question_text, labels, descs)
+                selected = _select_multi(question_text, labels, descs, multilines)
                 if selected is None:
                     return ToolResult(content="用户取消了问题。", is_error=True)
                 answer = ", ".join(selected) if selected else "（未选择）"
             else:
-                chosen = _select_one(question_text, labels, descs)
+                chosen = _select_one(question_text, labels, descs, multilines)
                 if chosen is None:
                     return ToolResult(content="用户取消了问题。", is_error=True)
                 answer = chosen

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 from cc_nano.core.tool import Tool, ToolResult
@@ -49,11 +50,15 @@ class FileWriteTool(Tool):
 
         try:
             path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(content, encoding="utf-8")
+            # 以二进制写入模式打开，确保可以调用 fileno()
+            with open(path, 'wb') as f:
+                f.write(content.encode('utf-8'))
+                f.flush()
+                os.fsync(f.fileno())          # 强制同步到磁盘
         except OSError as e:
             return ToolResult(content=f"写入文件时出错：{e}", is_error=True)
 
         lines = content.count("\n") + (
             1 if content and not content.endswith("\n") else 0
         )
-        return ToolResult(content=f"成功将 {lines} 行写入 {file_path}")
+        return ToolResult(content=f"成功将 {lines} 行写入 {file_path} 并已同步到磁盘。")
