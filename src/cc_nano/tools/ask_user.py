@@ -14,16 +14,52 @@
 
 from __future__ import annotations
 
+import asyncio
+import threading
+from concurrent.futures import Future
+
+from prompt_toolkit import Application
+from prompt_toolkit.key_binding import KeyBindings
+from prompt_toolkit.layout import Layout
+from prompt_toolkit.layout.containers import Window
+from prompt_toolkit.layout.controls import FormattedTextControl
+
 from cc_nano.core.tool import Tool, ToolResult
 
 # 内部哨兵值 —— 永远不会暴露给模型。
 _OTHER = "__other__"
 
 
+def run_application_sync(app: Application) -> None:
+    """
+    在同步上下文中安全运行 prompt_toolkit Application。
+    如果已经有运行中的事件循环，则在新线程中运行。
+    """
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        # 没有运行中的循环，可以直接运行
+        return app.run()
+
+    # 有运行中的循环 → 在新线程中运行
+    def _target():
+        # 创建新的事件循环并设置为当前线程的循环
+        new_loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(new_loop)
+        try:
+            new_loop.run_until_complete(app.run_async())
+        finally:
+            new_loop.close()
+
+    thread = threading.Thread(target=_target, daemon=True)
+    thread.start()
+    thread.join()
+    # 注意：如果 app.run_async() 中抛出了异常，这里无法捕获。
+    # 但 Application 内部通常会处理异常并正常退出。
+
 # ---------------------------------------------------------------------------
 # 基于 prompt_toolkit 的交互式选择器
 # ---------------------------------------------------------------------------
-
 
 def _select_one(
     question: str, labels: list[str], descriptions: list[str], multilines: list[bool]
@@ -36,12 +72,6 @@ def _select_one(
     如果所选选项的 multiline=True，
     则弹出多行编辑器（以空行结束，或 Ctrl+D 提交）。
     """
-    from prompt_toolkit import Application
-    from prompt_toolkit.key_binding import KeyBindings
-    from prompt_toolkit.layout import Layout
-    from prompt_toolkit.layout.containers import Window
-    from prompt_toolkit.layout.controls import FormattedTextControl
-
     other_idx = len(labels) - 1  # 最后一项总是“其他”
     cursor = [0]
     text_buf: list[str] = [""]  # “其他”文本的可变缓冲区
@@ -188,11 +218,11 @@ def _select_one(
         key_bindings=kb,
         full_screen=False,
     )
-
-    try:
-        app.run()
-    except (EOFError, KeyboardInterrupt):
-        return None
+    run_application_sync(app)
+    # try:
+    #     app.run()
+    # except (EOFError, KeyboardInterrupt):
+    #     return None
 
     if not result:
         return None
@@ -332,11 +362,12 @@ def _select_multi(
         key_bindings=kb,
         full_screen=False,
     )
+    run_application_sync(app)
 
-    try:
-        app.run()
-    except (EOFError, KeyboardInterrupt):
-        return None
+    # try:
+    #     app.run()
+    # except (EOFError, KeyboardInterrupt):
+    #     return None
 
     if not confirmed[0]:
         return None
