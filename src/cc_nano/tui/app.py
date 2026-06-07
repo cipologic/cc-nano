@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import asyncio
 import os
 import re
 import sys
@@ -11,6 +12,7 @@ import time
 import traceback
 from datetime import datetime
 from pathlib import Path
+from typing import Any
 
 from prompt_toolkit.history import FileHistory
 from rich.console import Console
@@ -56,7 +58,7 @@ from cc_nano.tools import (AgentTool, AskUserQuestionTool, BashTool,
                            GrepTool, SendMessageTool, SkillTool, TaskStopTool,
                            TodoUpdateTool, TodoWriteTool)
 from cc_nano.tui.input_parser import parse_input
-from cc_nano.tui.prompt import bordered_prompt, slash_completer
+from cc_nano.tui.prompt import bordered_prompt_async, slash_completer
 from cc_nano.tui.query import run_query
 from cc_nano.tui.shell import handle_sandbox_command, run_shell
 
@@ -75,10 +77,8 @@ def _run_dream(
     session_ids: list[str] | None = None,
     model: str = "",
 ) -> None:
-    """运行梦境整合：快照消息、提交梦境提示、恢复状态。
-
-    对应 TS 的 autoDream.ts —— 自动梦境（quiet=True）会隔离权限；
-    手动 /dream 使用正常权限（与 TS 行为一致）。
+    """
+    运行梦境整合：快照消息、提交梦境提示、恢复状态。
     """
     if engine is None:
         if not quiet:
@@ -190,7 +190,7 @@ def _build_tools_for_mode(
     todo_manager,
     sandbox_mgr,
 ) -> list:
-    """根据模式构建工具列表（原函数从 main 中提取，参数化）"""
+    """根据模式构建工具列表"""
     from cc_nano.tools.plan_tools import EnterPlanModeTool, ExitPlanModeTool
 
     tools = [
@@ -234,7 +234,7 @@ def _build_worker_engine(
     max_tokens=None,
     effort=None,
 ):
-    """构建 Worker 引擎（原函数从 main 中提取，参数化）"""
+    """构建 Worker 引擎"""
     from cc_nano.core.engine import Engine
     from cc_nano.core.permissions import PermissionChecker
 
@@ -283,7 +283,7 @@ def _build_explore_engine(
     max_tokens=None,
     effort=None,
 ):
-    """构建 Explore 引擎（原函数从 main 中提取，参数化）"""
+    """构建 Explore 引擎"""
     from cc_nano.core.engine import Engine
     from cc_nano.core.permissions import PermissionChecker
 
@@ -513,8 +513,10 @@ def _reload_environment(
     state["compact_service"] = new_compact_service
     state["worker_manager"] = new_worker_manager
 
-
-def main() -> None:
+# ============================================================
+# 异步主函数
+# ============================================================
+async def async_main() -> None:
     parser = argparse.ArgumentParser(prog="cc-nano", description="极简 AI 编码助手")
     parser.add_argument("prompt", nargs="?", help="要发送的提示（可选）")
     parser.add_argument(
@@ -594,9 +596,10 @@ def main() -> None:
 
         while True:
             try:
-                user_input = bordered_prompt(
+                user_input = await bordered_prompt_async(
                     console, history=bootstrap_history, completer=None
-                ).strip()
+                )
+                user_input = user_input.strip()
             except (KeyboardInterrupt, EOFError):
                 console.print("\n[dim]退出。[/dim]")
                 sys.exit(0)
@@ -770,7 +773,6 @@ def main() -> None:
 
         warning = match_session_mode(session_mode)
         is_coord = is_coordinator_mode()
-        is_team = is_teamwork_mode()
 
         # 从 state 中获取最新对象（支持热重载后更新）
         current_engine = state.get("engine")
@@ -978,7 +980,8 @@ def main() -> None:
 
     _exiting = False
 
-    def _drain_worker_notifications() -> None:
+    # 异步通知处理函数
+    async def _drain_worker_notifications() -> None:
         if _exiting:
             return
         # 收集需要排空的管理器：协调者 + 计划模式工作器
@@ -990,6 +993,8 @@ def main() -> None:
             managers_to_drain.append(plan_wm)
         if not managers_to_drain:
             return
+        
+        # 遍历所有管理器，处理通知
         for mgr in managers_to_drain:
             while True:
                 notifications = mgr.drain_notifications()
@@ -1011,16 +1016,15 @@ def main() -> None:
                     console.print(
                         f"\n{icon} [dim]{desc}（{uses} 次工具调用，{dur_s} 秒）[/dim]"
                     )
-                    try:
-                        run_query(
+                    # 在线程中运行 run_query 以避免阻塞事件循环
+                    await asyncio.to_thread(
+                            run_query,
                             engine,
                             notification,
                             print_mode=False,
                             permissions=permissions,
                             todo_manager=todo_manager,
                         )
-                    except (KeyboardInterrupt, Exception):
-                        return
 
     def _show_worker_status() -> None:
         """在提示符前显示运行中的工作器状态。"""
@@ -1039,429 +1043,457 @@ def main() -> None:
                 f"{uses} 次工具调用 · {activity}[/dim]"
             )
 
-    while True:
-        _drain_worker_notifications()
-        _show_worker_status()
-
-        # 每次提示前启动/重启动画器（会捕获新孵化的陪伴角色）
-        if animator is None:
-            try:
-                from cc_nano.buddy.prompt import safe_get_animator
-
-                animator = safe_get_animator()
-            except Exception:
+    # ------------------------------------------------------------
+    # 后台任务：定期检查 worker 通知和刷新界面
+    # ------------------------------------------------------------
+    async def _drain_and_refresh():
+        """每 0.5 秒检查一次通知队列，并在有通知时刷新界面。"""
+        while not _exiting:
+            await asyncio.sleep(0.5)
+            # 检查并处理通知（run_query 在线程中执行，不阻塞事件循环）
+            await _drain_worker_notifications()
+            # 如果有动画器，刷新工具栏
+            if animator:
+                # 触发 prompt_toolkit 应用的重绘（需要通过全局引用，此处简化）
                 pass
 
-        try:
-            if animator:
-                animator.start()
-            console.print()
-            _terminal_mode_ref[0] = False  # 总是从聊天模式开始
-            user_input = bordered_prompt(
-                console,
-                history=_file_history,
-                completer=slash_completer,
-                animator_toolbar=animator.toolbar_text if animator else None,
-                refresh_interval=0.5 if animator else None,
-                terminal_mode_ref=_terminal_mode_ref,
-            ).strip()
-            temp_ctx = CommandContext(
-                engine=None,
-                session_store=None,
-                compact_service=None,
-                console=console,
-                app_config=None,
-                memory_dir=None,
-                permissions=None,
-                run_dream=None,
-                cost_tracker=None,
-                new_session_store=None,
-                reconfigure_mode=None,
-                plan_manager=None,
-            )
-            # 项目管理命令处理
-            if user_input.startswith("/"):
-                parts = user_input.split(maxsplit=1)
-                cmd = parts[0][1:].lower()
-                arg = parts[1] if len(parts) > 1 else ""
-                if cmd in ("new", "list", "change", "delete", "status"):
-                    if cmd == "new":
-                        handle_new(temp_ctx, arg)
-                    elif cmd == "list":
-                        handle_list(temp_ctx, arg)
-                    elif cmd == "change":
-                        handle_change(temp_ctx, arg)
-                    elif cmd == "delete":
-                        handle_delete(temp_ctx, arg)
-                    elif cmd == "status":
-                        handle_status(temp_ctx, arg)
+    # 启动后台刷新任务
+    refresh_task = asyncio.create_task(_drain_and_refresh())
 
-                    # 对于会修改配置的命令，执行热重载
-                    if cmd in ("new", "change", "delete"):
-                        new_root = find_project_root(Path.cwd())
-                        if new_root is None:
-                            global_root = get_global_current_project()
-                            if global_root and Path(global_root).exists():
-                                new_root = Path(global_root).resolve()
-                            else:
-                                new_root = Path.cwd()
-                        set_project_root(new_root)
-                        _reload_environment(
-                            state,
-                            args,
-                            new_root,
-                            cwd,
-                            permissions,
-                            todo_manager,
-                            plan_manager,
-                            sandbox_mgr,
-                            skills_section,
-                            is_coordinator_mode(),
-                            is_teamwork_mode(),
-                        )
-                        engine = state["engine"]
-                        session_store = state["session_store"]
-                        app_config = state["app_config"]
-                        compact_service = state["compact_service"]
-                        worker_manager = state["worker_manager"]
-                        if engine:
-                            plan_manager.bind_engine(
-                                engine,
-                                build_explore_engine=lambda: _build_explore_engine(
-                                    sandbox_mgr,
-                                    cwd,
-                                    app_config.model,
-                                    app_config.provider,
-                                    app_config.memory_dir,
-                                    ["review"],
-                                    api_key=app_config.api_key,
-                                    base_url=app_config.base_url,
-                                    max_tokens=app_config.max_tokens,
-                                    effort=app_config.effort,
-                                ),
-                            )
-                    continue  # 跳过正常查询
-        except KeyboardInterrupt:
-            now = time.monotonic()
-            if now - last_ctrlc_time <= _DOUBLE_PRESS_TIMEOUT_S:
-                _exiting = True
-                # animator.stop() 由 finally 块处理
-                console.print("\n[dim]再见。[/dim]")
-                break
-            last_ctrlc_time = now
-            console.print("\n[dim yellow]再次按 Ctrl+C 退出[/dim yellow]")
-            continue
-        except EOFError:
-            if animator:
-                animator.stop()
-            console.print("\n[dim]再见。[/dim]")
-            break
-        finally:
-            if animator:
-                animator.stop()
+    try:
+        while True:
+            # 在等待输入前先处理一次积压通知
+            await _drain_worker_notifications()
+            _show_worker_status()
 
-        # 任何正常输入都重置双击计时器
-        last_ctrlc_time = 0.0
-
-        if not user_input:
-            continue
-
-        # ---------------------------------------------------------------------------
-        # 终端模式 —— 按 "!" 键原地切换模式（无需提交）。
-        # 在终端模式下，每次提交的输入都是 shell 命令。
-        # 不在终端模式时，"!cmd" 执行单次 shell 命令。
-        # ---------------------------------------------------------------------------
-        if _terminal_mode_ref[0]:
-            run_shell(user_input, console)
-            continue
-
-        if user_input.startswith("!") and len(user_input) > 1:
-            run_shell(user_input[1:].lstrip(), console)
-            continue
-        if user_input.lower() in ("exit", "quit", "/exit", "/quit"):
-            console.print("[dim]再见。[/dim]")
-            break
-        if user_input.startswith("/sandbox"):
-            handle_sandbox_command(user_input, sandbox_mgr, console)
-            continue
-
-        # 斜杠命令（会话、压缩、帮助等）
-        cmd = parse_command(user_input)
-        if cmd is not None:
-            cmd_name, cmd_args = cmd
-            if cmd_name in ("exit", "quit"):
-                console.print("[dim]再见。[/dim]")
-                break
-            # /buddy 单独处理（陪伴宠物）
-            if cmd_name == "buddy":
-                from cc_nano.buddy.commands import handle_buddy_command
-
-                handle_buddy_command(
-                    cmd_args,
-                    engine._client,
-                    console,
-                    app_config.buddy_model or app_config.model,
-                )
-                # 刷新动画器，以防刚孵化了陪伴角色
+            # 每次提示前启动/重启动画器（会捕获新孵化的陪伴角色）
+            if animator is None:
                 try:
                     from cc_nano.buddy.prompt import safe_get_animator
 
                     animator = safe_get_animator()
                 except Exception:
                     pass
-                continue
-            cmd_ctx = CommandContext(
-                engine=engine,
-                session_store=session_store,
-                compact_service=compact_service,
-                console=console,
-                app_config=app_config,
-                memory_dir=memory_dir,
-                permissions=permissions,
-                run_dream=lambda: _run_dream(
-                    engine, memory_dir, permissions, model=app_config.model
-                ),
-                cost_tracker=cost_tracker,
-                new_session_store=lambda: SessionStore(
-                    cwd=cwd,
-                    model=app_config.model,
-                    mode=current_session_mode(),
-                ),
-                reconfigure_mode=_apply_session_mode,
-                plan_manager=plan_manager,
-            )
-            handle_command(cmd_name, cmd_args, cmd_ctx)
-            session_store = cmd_ctx.session_store
-            # 如果命令设置了待处理的查询（例如 /plan <描述>），
-            # 则将其提交给模型，而不是继续到下一个提示。
-            if cmd_ctx.pending_query:
-                user_input = cmd_ctx.pending_query
-                cmd_ctx.pending_query = None
-                # 落到下面的正常查询处理
-            else:
-                continue
 
-        # 接近 token 限制时自动压缩（仅在 engine 有效时）
-        if engine is not None and should_compact(
-            engine.get_messages(),
-            model=app_config.model,
-            last_input_tokens=cost_tracker.last_input_tokens,
-        ):
-            console.print("[dim]自动压缩对话…[/dim]")
             try:
-                new_msgs, _ = compact_service.compact(
-                    engine.get_messages(), engine.system_prompt
+                if animator:
+                    animator.start()
+                console.print()
+                _terminal_mode_ref[0] = False  # 总是从聊天模式开始
+                user_input = await bordered_prompt_async(
+                    console,
+                    history=_file_history,
+                    completer=slash_completer,
+                    animator_toolbar=animator.toolbar_text if animator else None,
+                    refresh_interval=0.5 if animator else None,
+                    terminal_mode_ref=_terminal_mode_ref,
                 )
-                engine.set_messages(new_msgs)
-                console.print(
-                    f"[dim]上下文已压缩至 {estimate_tokens(new_msgs):,} 个 token。[/dim]"
+                user_input = user_input.strip()
+                temp_ctx = CommandContext(
+                    engine=None,
+                    session_store=None,
+                    compact_service=None,
+                    console=console,
+                    app_config=None,
+                    memory_dir=None,
+                    permissions=None,
+                    run_dream=None,
+                    cost_tracker=None,
+                    new_session_store=None,
+                    reconfigure_mode=None,
+                    plan_manager=None,
                 )
-            except Exception as e:
-                console.print(f"[dim red]自动压缩失败：{e}[/dim red]")
+                # 项目管理命令处理
+                if user_input.startswith("/"):
+                    parts = user_input.split(maxsplit=1)
+                    cmd = parts[0][1:].lower()
+                    arg = parts[1] if len(parts) > 1 else ""
+                    if cmd in ("new", "list", "change", "delete", "status"):
+                        if cmd == "new":
+                            handle_new(temp_ctx, arg)
+                        elif cmd == "list":
+                            handle_list(temp_ctx, arg)
+                        elif cmd == "change":
+                            handle_change(temp_ctx, arg)
+                        elif cmd == "delete":
+                            handle_delete(temp_ctx, arg)
+                        elif cmd == "status":
+                            handle_status(temp_ctx, arg)
 
-        # 检查用户是否在直接与陪伴角色对话，
-        # 让陪伴角色通过观察者直接回复（无需尴尬的 "." 响应）
-        _companion_addressed = False
-        try:
-            if not load_companion_muted():
-                comp = get_companion()
-                if comp and _is_addressed(user_input, comp.name):
-                    _companion_addressed = True
-                    reply_event = threading.Event()
+                        # 对于会修改配置的命令，执行热重载
+                        if cmd in ("new", "change", "delete"):
+                            new_root = find_project_root(Path.cwd())
+                            if new_root is None:
+                                global_root = get_global_current_project()
+                                if global_root and Path(global_root).exists():
+                                    new_root = Path(global_root).resolve()
+                                else:
+                                    new_root = Path.cwd()
+                            set_project_root(new_root)
+                            _reload_environment(
+                                state,
+                                args,
+                                new_root,
+                                cwd,
+                                permissions,
+                                todo_manager,
+                                plan_manager,
+                                sandbox_mgr,
+                                skills_section,
+                                is_coordinator_mode(),
+                                is_teamwork_mode(),
+                            )
+                            engine = state["engine"]
+                            session_store = state["session_store"]
+                            app_config = state["app_config"]
+                            compact_service = state["compact_service"]
+                            worker_manager = state["worker_manager"]
+                            if engine:
+                                plan_manager.bind_engine(
+                                    engine,
+                                    build_explore_engine=lambda: _build_explore_engine(
+                                        sandbox_mgr,
+                                        cwd,
+                                        app_config.model,
+                                        app_config.provider,
+                                        app_config.memory_dir,
+                                        ["review"],
+                                        api_key=app_config.api_key,
+                                        base_url=app_config.base_url,
+                                        max_tokens=app_config.max_tokens,
+                                        effort=app_config.effort,
+                                    ),
+                                )
+                        continue  # 跳过正常查询
+            except KeyboardInterrupt:
+                now = time.monotonic()
+                if now - last_ctrlc_time <= _DOUBLE_PRESS_TIMEOUT_S:
+                    _exiting = True
+                    # animator.stop() 由 finally 块处理
+                    console.print("\n[dim]再见。[/dim]")
+                    break
+                last_ctrlc_time = now
+                console.print("\n[dim yellow]再次按 Ctrl+C 退出[/dim yellow]")
+                continue
+            except EOFError:
+                if animator:
+                    animator.stop()
+                console.print("\n[dim]再见。[/dim]")
+                break
+            finally:
+                if animator:
+                    animator.stop()
 
-                    def _direct_reply(text: str) -> None:
-                        _set_reaction(text, print_to_terminal=True)
-                        reply_event.set()
+            # 任何正常输入都重置双击计时器
+            last_ctrlc_time = 0.0
 
-                    fire_companion_observer(
-                        "",
-                        comp,
+            if not user_input:
+                continue
+
+            # ---------------------------------------------------------------------------
+            # 终端模式 —— 按 "!" 键原地切换模式（无需提交）。
+            # 在终端模式下，每次提交的输入都是 shell 命令。
+            # 不在终端模式时，"!cmd" 执行单次 shell 命令。
+            # ---------------------------------------------------------------------------
+            if _terminal_mode_ref[0]:
+                run_shell(user_input, console)
+                continue
+
+            if user_input.startswith("!") and len(user_input) > 1:
+                run_shell(user_input[1:].lstrip(), console)
+                continue
+            if user_input.lower() in ("exit", "quit", "/exit", "/quit"):
+                console.print("[dim]再见。[/dim]")
+                break
+            if user_input.startswith("/sandbox"):
+                handle_sandbox_command(user_input, sandbox_mgr, console)
+                continue
+
+            # 斜杠命令（会话、压缩、帮助等）
+            cmd = parse_command(user_input)
+            if cmd is not None:
+                cmd_name, cmd_args = cmd
+                if cmd_name in ("exit", "quit"):
+                    console.print("[dim]再见。[/dim]")
+                    break
+                # /buddy 单独处理（陪伴宠物）
+                if cmd_name == "buddy":
+                    from cc_nano.buddy.commands import handle_buddy_command
+
+                    handle_buddy_command(
+                        cmd_args,
                         engine._client,
-                        _direct_reply,
-                        model=app_config.buddy_model or app_config.model,
-                        user_msg=user_input,
+                        console,
+                        app_config.buddy_model or app_config.model,
                     )
-                    reply_event.wait(timeout=10)
-        except Exception:
-            pass
+                    # 刷新动画器，以防刚孵化了陪伴角色
+                    try:
+                        from cc_nano.buddy.prompt import safe_get_animator
 
-        if _companion_addressed:
-            continue
+                        animator = safe_get_animator()
+                    except Exception:
+                        pass
+                    continue
+                cmd_ctx = CommandContext(
+                    engine=engine,
+                    session_store=session_store,
+                    compact_service=compact_service,
+                    console=console,
+                    app_config=app_config,
+                    memory_dir=memory_dir,
+                    permissions=permissions,
+                    run_dream=lambda: _run_dream(
+                        engine, memory_dir, permissions, model=app_config.model
+                    ),
+                    cost_tracker=cost_tracker,
+                    new_session_store=lambda: SessionStore(
+                        cwd=cwd,
+                        model=app_config.model,
+                        mode=current_session_mode(),
+                    ),
+                    reconfigure_mode=_apply_session_mode,
+                    plan_manager=plan_manager,
+                )
+                handle_command(cmd_name, cmd_args, cmd_ctx)
+                session_store = cmd_ctx.session_store
+                # 如果命令设置了待处理的查询（例如 /plan <描述>），
+                # 则将其提交给模型，而不是继续到下一个提示。
+                if cmd_ctx.pending_query:
+                    user_input = cmd_ctx.pending_query
+                    cmd_ctx.pending_query = None
+                    # 落到下面的正常查询处理
+                else:
+                    continue
 
-        # 在 run_query 前检查 engine 有效性 ==========
-        if engine is None or engine._client is None:
-            console.print("[red]无法执行查询：缺少 API Key 或项目配置无效。[/red]")
-            console.print(
-                "请使用 [cyan]/status[/cyan] 查看详情，并用 [cyan]/new[/cyan] 或 [cyan]/change[/cyan] 修复。"
-            )
-            continue
+            # 接近 token 限制时自动压缩（仅在 engine 有效时）
+            if engine is not None and should_compact(
+                engine.get_messages(),
+                model=app_config.model,
+                last_input_tokens=cost_tracker.last_input_tokens,
+            ):
+                console.print("[dim]自动压缩对话…[/dim]")
+                try:
+                    new_msgs, _ = compact_service.compact(
+                        engine.get_messages(), engine.system_prompt
+                    )
+                    engine.set_messages(new_msgs)
+                    console.print(
+                        f"[dim]上下文已压缩至 {estimate_tokens(new_msgs):,} 个 token。[/dim]"
+                    )
+                except Exception as e:
+                    console.print(f"[dim red]自动压缩失败：{e}[/dim red]")
 
-        run_query(
-            engine,
-            parse_input(user_input),
-            print_mode=False,
-            permissions=permissions,
-            todo_manager=todo_manager,
-        )
-        _drain_worker_notifications()
-
-        # 每轮对话后，在后台触发陪伴角色观察者
-        if engine is not None:
+            # 检查用户是否在直接与陪伴角色对话，
+            # 让陪伴角色通过观察者直接回复（无需尴尬的 "." 响应）
+            _companion_addressed = False
             try:
                 if not load_companion_muted():
                     comp = get_companion()
-                    if comp and engine._messages:
-                        last_msg = engine._messages[-1]
-                        if last_msg.get("role") == "assistant":
-                            content = last_msg.get("content", "")
-                            if isinstance(content, str):
-                                assistant_text = content
-                            elif isinstance(content, list):
-                                parts = []
-                                for block in content:
-                                    if (
-                                        isinstance(block, dict)
-                                        and block.get("type") == "text"
-                                    ):
-                                        parts.append(block.get("text", ""))
-                                    elif hasattr(block, "text"):
-                                        parts.append(block.text)
-                                assistant_text = " ".join(parts)
-                            else:
-                                assistant_text = str(content)
-                            if assistant_text.strip():
-                                # 根据本轮对话更新陪伴角色心情
+                    if comp and _is_addressed(user_input, comp.name):
+                        _companion_addressed = True
+                        reply_event = threading.Event()
+
+                        def _direct_reply(text: str) -> None:
+                            _set_reaction(text, print_to_terminal=True)
+                            reply_event.set()
+
+                        fire_companion_observer(
+                            "",
+                            comp,
+                            engine._client,
+                            _direct_reply,
+                            model=app_config.buddy_model or app_config.model,
+                            user_msg=user_input,
+                        )
+                        reply_event.wait(timeout=10)
+            except Exception:
+                pass
+
+            if _companion_addressed:
+                continue
+
+            # 在 run_query 前检查 engine 有效性 ==========
+            if engine is None or engine._client is None:
+                console.print("[red]无法执行查询：缺少 API Key 或项目配置无效。[/red]")
+                console.print(
+                    "请使用 [cyan]/status[/cyan] 查看详情，并用 [cyan]/new[/cyan] 或 [cyan]/change[/cyan] 修复。"
+                )
+                continue
+
+            # 执行主查询（同步，但会在引擎内部产生事件流）
+            run_query(
+                engine,
+                parse_input(user_input),
+                print_mode=False,
+                permissions=permissions,
+                todo_manager=todo_manager,
+            )
+            # 处理可能积压的通知
+            await _drain_worker_notifications()
+
+            # 每轮对话后，在后台触发陪伴角色观察者
+            if engine is not None:
+                try:
+                    if not load_companion_muted():
+                        comp = get_companion()
+                        if comp and engine._messages:
+                            last_msg = engine._messages[-1]
+                            if last_msg.get("role") == "assistant":
+                                content = last_msg.get("content", "")
+                                if isinstance(content, str):
+                                    assistant_text = content
+                                elif isinstance(content, list):
+                                    parts = []
+                                    for block in content:
+                                        if (
+                                            isinstance(block, dict)
+                                            and block.get("type") == "text"
+                                        ):
+                                            parts.append(block.get("text", ""))
+                                        elif hasattr(block, "text"):
+                                            parts.append(block.text)
+                                    assistant_text = " ".join(parts)
+                                else:
+                                    assistant_text = str(content)
+                                if assistant_text.strip():
+                                    # 根据本轮对话更新陪伴角色心情
+                                    try:
+                                        import time as _time
+
+                                        from cc_nano.buddy.mood import (
+                                            apply_decay, apply_events,
+                                            classify_events)
+                                        from cc_nano.buddy.storage import (
+                                            load_active_mood, save_active_mood)
+
+                                        now_ms = int(_time.time() * 1000)
+                                        current_mood = load_active_mood()
+                                        current_mood = apply_decay(current_mood, now_ms)
+                                        events = classify_events(assistant_text, user_input)
+                                        if events:
+                                            current_mood = apply_events(
+                                                current_mood, events
+                                            )
+                                        save_active_mood(current_mood)
+                                        # 刷新陪伴角色以更新心情
+                                        comp = get_companion()
+                                        if animator and comp:
+                                            animator.update_companion(comp)
+                                    except Exception:
+                                        pass
+                                    fire_companion_observer(
+                                        assistant_text,
+                                        comp,
+                                        engine._client,
+                                        _set_reaction,
+                                        model=app_config.buddy_model or app_config.model,
+                                        user_msg=user_input,
+                                    )
+                except Exception:
+                    pass  # 非关键
+
+            # 回合结束后：提取 <memory> 标签
+            # 获取消息快照以避免与后台线程（如梦境）的竞态条件
+            messages_snapshot = engine.get_messages()  # 返回列表副本
+            text = ""
+            for msg in reversed(messages_snapshot):
+                if msg.get("role") == "assistant":
+                    content = msg.get("content", "")
+                    if isinstance(content, str):
+                        text = content
+                    elif isinstance(content, list):
+                        parts = []
+                        for block in content:
+                            if isinstance(block, dict) and block.get("type") == "text":
+                                parts.append(block.get("text", ""))
+                            elif hasattr(block, "text"):
+                                parts.append(block.text)
+                        text = " ".join(parts)
+                    break
+            if text:
+                for mem in extract_memory_tags(text):
+                    append_to_daily_log(memory_dir, mem)
+
+            # 自动梦境门控检查 —— 在后台运行，避免阻塞 REPL
+            if engine is not None:
+                current_sid = session_store.session_id if session_store else session_id
+                sessions_path = session_store._dir if session_store else None
+                if app_config.auto_dream and should_auto_dream(
+                    memory_dir,
+                    min_hours=app_config.dream_interval_hours,
+                    min_sessions=app_config.dream_min_sessions,
+                    current_session_id=current_sid,
+                    sessions_dir=sessions_path,
+                ):
+                    prior_mtime = read_last_consolidated_at(memory_dir)
+                    if try_acquire_lock(memory_dir):
+                        # 收集用于梦境提示的会话 ID
+                        from cc_nano.features.memory import list_sessions_since
+
+                        sids = list_sessions_since(
+                            prior_mtime,
+                            sessions_dir=sessions_path,
+                            current_session_id=current_sid,
+                        )
+                        transcript_dir = str(sessions_path) if sessions_path else ""
+
+                        def _bg_dream(
+                            _prior_mtime=prior_mtime,
+                            _transcript_dir=transcript_dir,
+                            _sids=sids,
+                        ):
+                            try:
+                                _run_dream(
+                                    engine,  # 主引擎（仅用于读取配置和最后更新 system_prompt）
+                                    memory_dir,
+                                    permissions,
+                                    quiet=True,
+                                    transcript_dir=_transcript_dir,
+                                    session_ids=_sids,
+                                    model=app_config.model,
+                                )
+                            except Exception:
+                                # 记录完整堆栈到 stderr 和日志文件
+                                error_msg = traceback.format_exc()
+                                sys.stderr.write(f"[Dream Error] {error_msg}\n")
+                                sys.stderr.flush()
+
+                                # 尝试将错误写入项目日志目录（便于持久化）
                                 try:
-                                    import time as _time
+                                    log_dir = memory_dir / "logs"
+                                    log_dir.mkdir(parents=True, exist_ok=True)
+                                    log_file = log_dir / "dream_errors.log"
+                                    from datetime import datetime
 
-                                    from cc_nano.buddy.mood import (
-                                        apply_decay, apply_events,
-                                        classify_events)
-                                    from cc_nano.buddy.storage import (
-                                        load_active_mood, save_active_mood)
-
-                                    now_ms = int(_time.time() * 1000)
-                                    current_mood = load_active_mood()
-                                    current_mood = apply_decay(current_mood, now_ms)
-                                    events = classify_events(assistant_text, user_input)
-                                    if events:
-                                        current_mood = apply_events(
-                                            current_mood, events
+                                    with open(log_file, "a", encoding="utf-8") as f:
+                                        f.write(
+                                            f"[{datetime.now().isoformat()}] {error_msg}\n"
                                         )
-                                    save_active_mood(current_mood)
-                                    # 刷新陪伴角色以更新心情
-                                    comp = get_companion()
-                                    if animator and comp:
-                                        animator.update_companion(comp)
                                 except Exception:
                                     pass
-                                fire_companion_observer(
-                                    assistant_text,
-                                    comp,
-                                    engine._client,
-                                    _set_reaction,
-                                    model=app_config.buddy_model or app_config.model,
-                                    user_msg=user_input,
-                                )
-            except Exception:
-                pass  # 非关键
+                                from cc_nano.features.memory import get_lock_path
 
-        # 回合结束后：提取 <memory> 标签
-        # 获取消息快照以避免与后台线程（如梦境）的竞态条件
-        messages_snapshot = engine.get_messages()  # 返回列表副本
-        text = ""
-        for msg in reversed(messages_snapshot):
-            if msg.get("role") == "assistant":
-                content = msg.get("content", "")
-                if isinstance(content, str):
-                    text = content
-                elif isinstance(content, list):
-                    parts = []
-                    for block in content:
-                        if isinstance(block, dict) and block.get("type") == "text":
-                            parts.append(block.get("text", ""))
-                        elif hasattr(block, "text"):
-                            parts.append(block.text)
-                    text = " ".join(parts)
-                break
-        if text:
-            for mem in extract_memory_tags(text):
-                append_to_daily_log(memory_dir, mem)
+                                try:
+                                    lp = get_lock_path(memory_dir)
+                                    if lp.exists():
+                                        os.utime(lp, (_prior_mtime, _prior_mtime))
+                                except OSError:
+                                    pass
+                            finally:
+                                release_lock(memory_dir)
 
-        # 自动梦境门控检查 —— 在后台运行，避免阻塞 REPL
-        if engine is not None:
-            current_sid = session_store.session_id if session_store else session_id
-            sessions_path = session_store._dir if session_store else None
-            if app_config.auto_dream and should_auto_dream(
-                memory_dir,
-                min_hours=app_config.dream_interval_hours,
-                min_sessions=app_config.dream_min_sessions,
-                current_session_id=current_sid,
-                sessions_dir=sessions_path,
-            ):
-                prior_mtime = read_last_consolidated_at(memory_dir)
-                if try_acquire_lock(memory_dir):
-                    # 收集用于梦境提示的会话 ID
-                    from cc_nano.features.memory import list_sessions_since
+                        threading.Thread(target=_bg_dream, daemon=True).start()
 
-                    sids = list_sessions_since(
-                        prior_mtime,
-                        sessions_dir=sessions_path,
-                        current_session_id=current_sid,
-                    )
-                    transcript_dir = str(sessions_path) if sessions_path else ""
+    finally:
+        refresh_task.cancel()
+        if animator:
+            animator.stop()
+        # 退出时打印费用汇总
+        if cost_tracker.total_cost_usd > 0:
+            console.print(f"\n[dim]{cost_tracker.format_cost()}[/dim]")
 
-                    def _bg_dream(
-                        _prior_mtime=prior_mtime,
-                        _transcript_dir=transcript_dir,
-                        _sids=sids,
-                    ):
-                        try:
-                            _run_dream(
-                                engine,  # 主引擎（仅用于读取配置和最后更新 system_prompt）
-                                memory_dir,
-                                permissions,
-                                quiet=True,
-                                transcript_dir=_transcript_dir,
-                                session_ids=_sids,
-                                model=app_config.model,
-                            )
-                        except Exception:
-                            # 记录完整堆栈到 stderr 和日志文件
-                            error_msg = traceback.format_exc()
-                            sys.stderr.write(f"[Dream Error] {error_msg}\n")
-                            sys.stderr.flush()
-
-                            # 尝试将错误写入项目日志目录（便于持久化）
-                            try:
-                                log_dir = memory_dir / "logs"
-                                log_dir.mkdir(parents=True, exist_ok=True)
-                                log_file = log_dir / "dream_errors.log"
-                                from datetime import datetime
-
-                                with open(log_file, "a", encoding="utf-8") as f:
-                                    f.write(
-                                        f"[{datetime.now().isoformat()}] {error_msg}\n"
-                                    )
-                            except Exception:
-                                pass
-                            from cc_nano.features.memory import get_lock_path
-
-                            try:
-                                lp = get_lock_path(memory_dir)
-                                if lp.exists():
-                                    os.utime(lp, (_prior_mtime, _prior_mtime))
-                            except OSError:
-                                pass
-                        finally:
-                            release_lock(memory_dir)
-
-                    threading.Thread(target=_bg_dream, daemon=True).start()
-
-    # 退出时打印费用汇总
-    if cost_tracker.total_cost_usd > 0:
-        console.print(f"\n[dim]{cost_tracker.format_cost()}[/dim]")
-
+def main() -> None:
+    asyncio.run(async_main())
 
 if __name__ == "__main__":
     main()
